@@ -1,76 +1,80 @@
-import { GuildSettings, readSettings, writeSettings } from '#lib/database';
+import { readSettings } from '#lib/database';
+import { getT } from '#lib/i18n';
 import { LanguageKeys } from '#lib/i18n/languageKeys';
 import { toPermissionsArray } from '#utils/bits';
 import { seconds } from '#utils/common';
 import { differenceBitField, differenceMap } from '#utils/common/comparators';
 import { Colors, LongWidthSpace } from '#utils/constants';
+import { getLogger } from '#utils/functions';
+import { EmbedBuilder } from '@discordjs/builders';
 import { ApplyOptions } from '@sapphire/decorators';
-import { GuildBasedChannelTypes, isDMChannel, isNsfwChannel, NonThreadGuildBasedChannelTypes } from '@sapphire/discord.js-utilities';
-import { Events, Listener, ListenerOptions } from '@sapphire/framework';
-import { isNullish } from '@sapphire/utilities';
-import { DMChannel, GuildChannel, MessageEmbed, NewsChannel, PermissionOverwrites, StoreChannel, TextChannel, VoiceChannel } from 'discord.js';
-import type { TFunction } from 'i18next';
+import { isDMChannel, isNsfwChannel, type GuildBasedChannelTypes, type NonThreadGuildBasedChannelTypes } from '@sapphire/discord.js-utilities';
+import { Events, Listener } from '@sapphire/framework';
+import type { TFunction } from '@sapphire/plugin-i18next';
+import {
+	ChannelType,
+	OverwriteType,
+	type DMChannel,
+	type GuildChannel,
+	type NewsChannel,
+	type PermissionOverwrites,
+	type TextChannel,
+	type VoiceChannel
+} from 'discord.js';
 
-type ChannelType = DMChannel | GuildChannel;
+type Channel = DMChannel | GuildChannel;
 
-@ApplyOptions<ListenerOptions>({ event: Events.ChannelUpdate })
+@ApplyOptions<Listener.Options>({ event: Events.ChannelUpdate })
 export class UserListener extends Listener<typeof Events.ChannelUpdate> {
-	public async run(previous: ChannelType, next: ChannelType) {
+	public async run(previous: Channel, next: Channel) {
 		if (isDMChannel(next)) return;
 
-		const [channelId, t] = await readSettings(next.guild, (settings) => [
-			settings[GuildSettings.Channels.Logs.ChannelUpdate],
-			settings.getLanguage()
-		]);
-		if (isNullish(channelId)) return;
+		const settings = await readSettings(next.guild);
+		await getLogger(next.guild).send({
+			key: 'channelsLogsChannelUpdate',
+			channelId: settings.channelsLogsChannelUpdate,
+			makeMessage: () => {
+				const t = getT(settings.language);
+				const changes: string[] = [...this.differenceChannel(t, previous as GuildBasedChannelTypes, next as GuildBasedChannelTypes)];
+				if (changes.length === 0) return null;
 
-		const channel = next.guild.channels.cache.get(channelId) as TextChannel | undefined;
-		if (channel === undefined) {
-			await writeSettings(next.guild, [[GuildSettings.Channels.Logs.ChannelUpdate, null]]);
-			return;
-		}
-
-		const changes: string[] = [...this.differenceChannel(t, previous as GuildBasedChannelTypes, next as GuildBasedChannelTypes)];
-		if (changes.length === 0) return;
-
-		const embed = new MessageEmbed()
-			.setColor(Colors.Yellow)
-			.setAuthor(`${next.name} (${next.id})`, channel.guild.iconURL({ size: 64, format: 'png', dynamic: true }) ?? undefined)
-			.setDescription(changes.join('\n'))
-			.setFooter(t(LanguageKeys.Events.Guilds.Logs.ChannelUpdate))
-			.setTimestamp();
-		await channel.send({ embeds: [embed] });
+				return new EmbedBuilder()
+					.setColor(Colors.Yellow)
+					.setAuthor({ name: `${next.name} (${next.id})`, iconURL: next.guild.iconURL({ size: 64, extension: 'png' }) ?? undefined })
+					.setDescription(changes.join('\n'))
+					.setFooter({ text: t(LanguageKeys.Events.Guilds.Logs.ChannelUpdate) })
+					.setTimestamp();
+			}
+		});
 	}
 
 	private *differenceChannel(t: TFunction, previous: GuildBasedChannelTypes, next: GuildBasedChannelTypes) {
-		const isThread = next.isThread();
-
 		yield* this.differenceGuildChannel(t, previous, next);
+
+		const isThread = next.isThread();
 		if (!isThread) {
-			yield* this.differencePositions(t, previous as NonThreadGuildBasedChannelTypes, next);
+			yield* this.differencePositions(t, previous as NonThreadGuildBasedChannelTypes, next as NonThreadGuildBasedChannelTypes);
 		}
 
 		if (previous.type !== next.type) return;
 
 		switch (next.type) {
-			case 'GUILD_TEXT':
+			case ChannelType.GuildText:
 				yield* this.differenceTextChannel(t, previous as TextChannel, next as TextChannel);
 				break;
-			case 'GUILD_VOICE':
+			case ChannelType.GuildStageVoice:
+			case ChannelType.GuildVoice:
 				yield* this.differenceVoiceChannel(t, previous as VoiceChannel, next as VoiceChannel);
 				break;
-			case 'GUILD_NEWS':
+			case ChannelType.GuildAnnouncement:
 				yield* this.differenceNewsChannel(t, previous as NewsChannel, next as NewsChannel);
-				break;
-			case 'GUILD_STORE':
-				yield* this.differenceStoreChannel(t, previous as StoreChannel, next as StoreChannel);
 				break;
 			default:
 			// No Op
 		}
 
 		if (!isThread) {
-			yield* this.differencePermissionOverwrites(t, previous as NonThreadGuildBasedChannelTypes, next);
+			yield* this.differencePermissionOverwrites(t, previous as NonThreadGuildBasedChannelTypes, next as NonThreadGuildBasedChannelTypes);
 		}
 	}
 
@@ -191,10 +195,6 @@ export class UserListener extends Listener<typeof Events.ChannelUpdate> {
 		if (previous.topic !== next.topic) yield this.displayTopic(t, previous.topic, next.topic);
 	}
 
-	private *differenceStoreChannel(t: TFunction, previous: StoreChannel, next: StoreChannel) {
-		if (isNsfwChannel(previous) !== isNsfwChannel(next)) yield this.displayNsfw(t, isNsfwChannel(previous), isNsfwChannel(next));
-	}
-
 	private displayNsfw(t: TFunction, previous: boolean, next: boolean) {
 		return t(LanguageKeys.Events.Guilds.Logs.ChannelUpdateNsfw, {
 			previous: t(previous ? LanguageKeys.Globals.Yes : LanguageKeys.Globals.No),
@@ -225,7 +225,7 @@ export class UserListener extends Listener<typeof Events.ChannelUpdate> {
 	}
 
 	private displayMention(permissions: PermissionOverwrites) {
-		if (permissions.type === 'member') return `<@${permissions.id}>`;
+		if (permissions.type === OverwriteType.Member) return `<@${permissions.id}>`;
 		if (permissions.id === permissions.channel.guild.id) return '@everyone';
 		return `<@&${permissions.id}>`;
 	}

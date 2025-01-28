@@ -1,12 +1,7 @@
-import { createUser } from '#mocks/MockInstances';
 import * as utils from '#utils/util';
-import Collection from '@discordjs/collection';
-import { Time } from '@sapphire/time-utilities';
 import type { DeepPartial } from '@sapphire/utilities';
-import { Message, MessageAttachment, MessageEmbed } from 'discord.js';
-import { readFile } from 'node:fs/promises';
-import { mockRandom, resetMockRandom } from 'jest-mock-random';
-import { resolve } from 'node:path';
+import { Attachment, Collection, Embed, Message, type APIAttachment } from 'discord.js';
+import { createEmbed, createUser } from '../mocks/MockInstances.js';
 
 describe('Utils', () => {
 	describe('IMAGE_EXTENSION', () => {
@@ -36,63 +31,13 @@ describe('Utils', () => {
 		});
 	});
 
-	describe('radians', () => {
-		test('GIVEN 180 degrees THEN returns 1 Pi', () => {
-			expect(utils.radians(180)).toEqual(Math.PI);
-		});
-
-		test('GIVEN 120 degrees THEN returns ⅔ Pi', () => {
-			expect(utils.radians(120)).toEqual((Math.PI / 3) * 2);
-		});
-
-		test('GIVEN 360 degrees THEN returns 2 Pi', () => {
-			expect(utils.radians(360)).toEqual(Math.PI * 2);
-		});
-	});
-
-	describe('showSeconds', () => {
-		test('GIVEN duration of string THEN returns 00:00', () => {
-			// @ts-expect-error Testing the error case
-			expect(utils.showSeconds('I am your father')).toEqual('00:00');
-		});
-
-		test('GIVEN duration of number THEN returns seconds', () => {
-			expect(utils.showSeconds(Number(Time.Day))).toEqual('24:00:00');
-		});
-
-		test('GIVEN duration of number THEN returns seconds', () => {
-			expect(utils.showSeconds(Number(Time.Second))).toEqual('00:01');
-		});
-	});
-
-	describe('oneToTen', () => {
-		test('GIVEN positive rational number THEN returns level 0 (😪)', () => {
-			expect(utils.oneToTen(2 / 3)).toStrictEqual({ color: 5968128, emoji: '😪' });
-		});
-
-		test('GIVEN negative rational number THEN returns level 0 (😪)', () => {
-			expect(utils.oneToTen(2 / 3)).toStrictEqual({ color: 5968128, emoji: '😪' });
-		});
-
-		test('GIVEN positive integer number THEN returns level 2 (😫)', () => {
-			expect(utils.oneToTen(2)).toStrictEqual({ color: 11211008, emoji: '😫' });
-		});
-
-		test('GIVEN negative integer number THEN returns level 0 (😪)', () => {
-			expect(utils.oneToTen(-5)).toStrictEqual({ color: 5968128, emoji: '😪' });
-		});
-
-		test('GIVEN positive integer over 10 THEN returns level 10 (😍)', () => {
-			expect(utils.oneToTen(11)).toStrictEqual({ color: 5362927, emoji: '😍' });
-		});
-	});
-
 	describe('extractDetailedMentions', () => {
 		test('GIVEN empty string THEN returns empty results', () => {
 			const result = utils.extractDetailedMentions('');
 			expect(result.channels.size).toBe(0);
 			expect(result.roles.size).toBe(0);
 			expect(result.users.size).toBe(0);
+			expect(result.parse).toStrictEqual([]);
 		});
 
 		test('GIVEN a user mention THEN returns one user ID', () => {
@@ -100,6 +45,7 @@ describe('Utils', () => {
 			expect(result.channels.size).toBe(0);
 			expect(result.roles.size).toBe(0);
 			expect([...result.users]).toStrictEqual(['242043489611808769']);
+			expect(result.parse).toStrictEqual([]);
 		});
 
 		test('GIVEN a member mention THEN returns one user ID', () => {
@@ -107,6 +53,7 @@ describe('Utils', () => {
 			expect(result.channels.size).toBe(0);
 			expect(result.roles.size).toBe(0);
 			expect([...result.users]).toStrictEqual(['242043489611808769']);
+			expect(result.parse).toStrictEqual([]);
 		});
 
 		test('GIVEN a duplicated user mention THEN returns only one user ID', () => {
@@ -114,6 +61,7 @@ describe('Utils', () => {
 			expect(result.channels.size).toBe(0);
 			expect(result.roles.size).toBe(0);
 			expect([...result.users]).toStrictEqual(['242043489611808769']);
+			expect(result.parse).toStrictEqual([]);
 		});
 
 		test('GIVEN a channel mention THEN returns one channel ID', () => {
@@ -121,6 +69,7 @@ describe('Utils', () => {
 			expect([...result.channels]).toStrictEqual(['541740581832097792']);
 			expect(result.roles.size).toBe(0);
 			expect(result.users.size).toBe(0);
+			expect(result.parse).toStrictEqual([]);
 		});
 
 		test('GIVEN a duplicated channel mention THEN returns only one channel ID', () => {
@@ -128,6 +77,7 @@ describe('Utils', () => {
 			expect([...result.channels]).toStrictEqual(['541740581832097792']);
 			expect(result.roles.size).toBe(0);
 			expect(result.users.size).toBe(0);
+			expect(result.parse).toStrictEqual([]);
 		});
 
 		test('GIVEN a role mention THEN returns one role ID', () => {
@@ -135,6 +85,7 @@ describe('Utils', () => {
 			expect(result.channels.size).toBe(0);
 			expect([...result.roles]).toStrictEqual(['541739191776575502']);
 			expect(result.users.size).toBe(0);
+			expect(result.parse).toStrictEqual([]);
 		});
 
 		test('GIVEN a duplicated role mention THEN returns only one role ID', () => {
@@ -142,6 +93,7 @@ describe('Utils', () => {
 			expect(result.channels.size).toBe(0);
 			expect([...result.roles]).toStrictEqual(['541739191776575502']);
 			expect(result.users.size).toBe(0);
+			expect(result.parse).toStrictEqual([]);
 		});
 
 		test('GIVEN invalid mentions (ID shorter than 17 digits) THEN returns empty results', () => {
@@ -149,6 +101,7 @@ describe('Utils', () => {
 			expect(result.channels.size).toBe(0);
 			expect(result.roles.size).toBe(0);
 			expect(result.users.size).toBe(0);
+			expect(result.parse).toStrictEqual([]);
 		});
 
 		test('GIVEN invalid mentions (ID longer than 19 digits) THEN returns empty results', () => {
@@ -158,6 +111,7 @@ describe('Utils', () => {
 			expect(result.channels.size).toBe(0);
 			expect(result.roles.size).toBe(0);
 			expect(result.users.size).toBe(0);
+			expect(result.parse).toStrictEqual([]);
 		});
 
 		test('GIVEN a role, a channel, and a user mention THEN returns one ID for each', () => {
@@ -167,12 +121,17 @@ describe('Utils', () => {
 			expect([...result.channels]).toStrictEqual(['541740581832097792']);
 			expect([...result.roles]).toStrictEqual(['541739191776575502']);
 			expect([...result.users]).toStrictEqual(['268792781713965056']);
+			expect(result.parse).toStrictEqual([]);
 		});
-	});
 
-	describe('twemoji', () => {
-		test('GIVEN twemoji icon THEN returns identifier for maxcdn', () => {
-			expect(utils.twemoji('😀')).toEqual('1f600');
+		test('GIVEN a role, a channel, a user, and an everyone mention THEN returns one ID for each', () => {
+			const result = utils.extractDetailedMentions(
+				'<@268792781713965056> sent a message in <#541740581832097792> mentioning <@&541739191776575502>! @everyone'
+			);
+			expect([...result.channels]).toStrictEqual(['541740581832097792']);
+			expect([...result.roles]).toStrictEqual(['541739191776575502']);
+			expect([...result.users]).toStrictEqual(['268792781713965056']);
+			expect(result.parse).toStrictEqual(['everyone']);
 		});
 	});
 
@@ -190,7 +149,7 @@ describe('Utils', () => {
 			expect(
 				utils.getContent({
 					content: '',
-					embeds: [new MessageEmbed().setDescription('Hey there!')]
+					embeds: [createEmbed({ description: 'Hey there!' })]
 				} as unknown as Message)
 			).toEqual('Hey there!');
 		});
@@ -199,7 +158,7 @@ describe('Utils', () => {
 			expect(
 				utils.getContent({
 					content: '',
-					embeds: [new MessageEmbed().addField('Name', 'Value')]
+					embeds: [createEmbed({ fields: [{ name: 'Name', value: 'Value' }] })]
 				} as unknown as Message)
 			).toEqual('Value');
 		});
@@ -208,210 +167,83 @@ describe('Utils', () => {
 			expect(
 				utils.getContent({
 					content: '',
-					embeds: [new MessageEmbed()]
+					embeds: [createEmbed({})]
 				} as unknown as Message)
 			).toEqual(null);
 		});
 	});
 
-	describe('getAllContent', () => {
-		test('GIVEN content THEN returns content', () => {
-			expect(
-				utils.getAllContent({
-					content: 'Something',
-					embeds: []
-				} as unknown as Message)
-			).toEqual('Something');
-		});
-
-		test('GIVEN description in embed THEN returns description', () => {
-			expect(
-				utils.getAllContent({
-					content: '',
-					embeds: [new MessageEmbed().setDescription('Hey there!')]
-				} as unknown as Message)
-			).toEqual('Hey there!');
-		});
-
-		test('GIVEN field value in embed THEN returns field value', () => {
-			expect(
-				utils.getAllContent({
-					content: '',
-					embeds: [new MessageEmbed().addField('Name', 'Value')]
-				} as unknown as Message)
-			).toEqual('Name\nValue');
-		});
-
-		test('GIVEN no detectable content THEN returns null', () => {
-			expect(
-				utils.getAllContent({
-					content: '',
-					embeds: [new MessageEmbed()]
-				} as unknown as Message)
-			).toEqual('');
-		});
-
-		test('GIVEN content and description in embed THEN returns both', () => {
-			expect(
-				utils.getAllContent({
-					content: 'Something',
-					embeds: [new MessageEmbed().setDescription('Hey there!')]
-				} as unknown as Message)
-			).toEqual('Something\nHey there!');
-		});
-
-		test('GIVEN content and author in embed THEN returns both', () => {
-			expect(
-				utils.getAllContent({
-					content: 'Something',
-					embeds: [new MessageEmbed().setAuthor('Some author!')]
-				} as unknown as Message)
-			).toEqual('Something\nSome author!');
-		});
-
-		test('GIVEN content and title in embed THEN returns both', () => {
-			expect(
-				utils.getAllContent({
-					content: 'Something',
-					embeds: [new MessageEmbed().setTitle('Some title!')]
-				} as unknown as Message)
-			).toEqual('Something\nSome title!');
-		});
-
-		test('GIVEN description and footer in embed THEN returns both', () => {
-			expect(
-				utils.getAllContent({
-					content: '',
-					embeds: [new MessageEmbed().setDescription('Description!').setFooter('Some footer!')]
-				} as unknown as Message)
-			).toEqual('Description!\nSome footer!');
-		});
-
-		test('GIVEN two embeds THEN returns both', () => {
-			expect(
-				utils.getAllContent({
-					content: '',
-					embeds: [
-						new MessageEmbed().setDescription('Description!').setFooter('Some footer!'),
-						new MessageEmbed().setDescription('Other embed!').setFooter('Another footer!')
-					]
-				} as unknown as Message)
-			).toEqual('Description!\nSome footer!\nOther embed!\nAnother footer!');
-		});
-	});
-
 	describe('getImage', () => {
-		test('GIVEN message w/ attachments w/ image w/o proxyURL attachment THEN returns url', async () => {
-			const filePath = resolve(__dirname, '..', 'mocks', 'image.png');
-			const buffer = await readFile(filePath);
-			const fakeAttachment = new MessageAttachment(buffer, 'image.png');
-			fakeAttachment.url = filePath;
-			fakeAttachment.height = 32;
-			fakeAttachment.width = 32;
+		const _Query = new URLSearchParams({
+			ex: '651c15b6',
+			is: '651ac436',
+			hm: 'b0227f7dce067d2f83880cd01f59a5856885af9204940f8c666dd81f257796c6'
+		}).toString();
 
-			const fakeMessage: DeepPartial<Message> = {
-				attachments: new Collection<string, MessageAttachment>([['image.png', fakeAttachment]]),
-				embeds: []
-			};
+		function createAttachment(data: APIAttachment): Attachment {
+			return Reflect.construct(Attachment, [data]);
+		}
 
+		function createAttachments(attachment?: Attachment | undefined) {
+			const collection = new Collection<string, Attachment>();
+			if (attachment) collection.set(attachment.id, attachment);
+			return collection;
+		}
+
+		function makeEmbed(name: 'image' | 'thumbnail'): Embed {
+			return createEmbed({
+				[name]: {
+					url: `https://cdn.discordapp.com/attachments/222222222222222222/222222222222222222/image.png?${_Query}&`,
+					proxy_url: `https://media.discordapp.net/attachments/222222222222222222/222222222222222222/image.png?${_Query}&`,
+					width: 32,
+					height: 32
+				}
+			});
+		}
+
+		function getImage(message: DeepPartial<Message>) {
 			// @ts-expect-error We're only passing partial data to not mock an entire message
-			expect(utils.getImage(fakeMessage)).toEqual(filePath);
-		});
+			return utils.getImage(message);
+		}
 
-		test('GIVEN message w/ attachments w/ image w/ proxyURL attachment THEN returns url', async () => {
-			const filePath = resolve(__dirname, '..', 'mocks', 'image.png');
-			const buffer = await readFile(filePath);
-			const fakeAttachment = new MessageAttachment(buffer, 'image.png');
-			fakeAttachment.url = filePath;
-			fakeAttachment.proxyURL = filePath;
-			fakeAttachment.height = 32;
-			fakeAttachment.width = 32;
+		describe.each`
+			embed          | description
+			${null}        | ${'no embeds'}
+			${'image'}     | ${'image embed'}
+			${'thumbnail'} | ${'thumbnail embed'}
+		`('GIVEN message WITH $description', ({ embed }: { embed: null | 'image' | 'thumbnail' }) => {
+			const AttachmentImage = createAttachment({
+				id: '1111111111111111111',
+				filename: 'image.png',
+				content_type: 'image/png',
+				url: `https://cdn.discordapp.com/attachments/111111111111111111/111111111111111111/image.png?${_Query}&`,
+				proxy_url: `https://media.discordapp.net/attachments/111111111111111111/111111111111111111/image.png?${_Query}&`,
+				size: 2463,
+				width: 32,
+				height: 32
+			} as const);
+			const AttachmentText = createAttachment({
+				id: '1111111111111111111',
+				filename: 'text.txt',
+				content_type: 'text/plain; charset=utf-8',
+				url: `https://cdn.discordapp.com/attachments/111111111111111111/111111111111111111/text.txt?${_Query}&`,
+				proxy_url: `https://media.discordapp.net/attachments/111111111111111111/111111111111111111/text.txt?${_Query}&`,
+				size: 4
+			} as const);
 
-			const fakeMessage: DeepPartial<Message> = {
-				attachments: new Collection<string, MessageAttachment>([['image.png', fakeAttachment]]),
-				embeds: []
-			};
+			const embeds: Embed[] = embed === null ? [] : [makeEmbed(embed)];
+			const ExpectedEmbedImageURL = embed === null ? null : embeds[0][embed]!.proxyURL;
+			const ExpectedReturn = embed === null ? 'null' : `embed ${embed} URL`;
+			test.each`
+				attachment         | returns             | expected                    | description
+				${undefined}       | ${ExpectedReturn}   | ${ExpectedEmbedImageURL}    | ${'no attachments'}
+				${AttachmentText}  | ${ExpectedReturn}   | ${ExpectedEmbedImageURL}    | ${'non-image attachment'}
+				${AttachmentImage} | ${'attachment URL'} | ${AttachmentImage.proxyURL} | ${'image attachment'}
+			`(`AND $description THEN returns $returns`, ({ attachment, expected }) => {
+				const message: DeepPartial<Message> = { attachments: createAttachments(attachment), embeds, stickers: new Collection() };
 
-			// @ts-expect-error We're only passing partial data to not mock an entire message
-			expect(utils.getImage(fakeMessage)).toEqual(filePath);
-		});
-
-		test('GIVEN message w/ attachments w/o image attachment THEN passes through to embed checking', async () => {
-			const filePath = resolve(__dirname, '..', 'mocks', 'image.png');
-			const buffer = await readFile(filePath);
-			const fakeAttachment = new MessageAttachment(buffer, 'image.png');
-			fakeAttachment.url = 'not_an_image';
-			fakeAttachment.proxyURL = 'not_an_image';
-			fakeAttachment.height = 32;
-			fakeAttachment.width = 32;
-
-			const fakeMessage: DeepPartial<Message> = {
-				attachments: new Collection<string, MessageAttachment>([['image.png', fakeAttachment]]),
-				embeds: [
-					{
-						type: 'image',
-						thumbnail: { url: 'image.png', proxyURL: 'image.png', height: 32, width: 32 }
-					}
-				]
-			};
-
-			// @ts-expect-error We're only passing partial data to not mock an entire message
-			expect(utils.getImage(fakeMessage)).toEqual('image.png');
-		});
-
-		test('GIVEN message w/o attachments w/ embed type === image THEN returns embedded image url', () => {
-			const fakeMessage: DeepPartial<Message> = {
-				attachments: new Collection<string, MessageAttachment>(),
-				embeds: [
-					{
-						type: 'image',
-						thumbnail: { url: 'image.png', proxyURL: 'image.png', height: 32, width: 32 }
-					}
-				]
-			};
-
-			// @ts-expect-error We're only passing partial data to not mock an entire message
-			expect(utils.getImage(fakeMessage)).toEqual('image.png');
-		});
-
-		test('GIVEN message w/o attachments w/ embed w/ image THEN returns embedded image url', () => {
-			const fakeMessage: DeepPartial<Message> = {
-				attachments: new Collection<string, MessageAttachment>(),
-				embeds: [
-					{
-						type: 'not_image',
-						image: { url: 'image.png', proxyURL: 'image.png', height: 32, width: 32 }
-					}
-				]
-			};
-
-			// @ts-expect-error We're only passing partial data to not mock an entire message
-			expect(utils.getImage(fakeMessage)).toEqual('image.png');
-		});
-
-		test('GIVEN message w/o attachments w/ embed w/o image THEN returns null', () => {
-			const fakeMessage: DeepPartial<Message> = {
-				attachments: new Collection<string, MessageAttachment>(),
-				embeds: [
-					{
-						type: 'not_image',
-						image: undefined
-					}
-				]
-			};
-
-			// @ts-expect-error We're only passing partial data to not mock an entire message
-			expect(utils.getImage(fakeMessage)).toBeNull();
-		});
-
-		test('GIVEN message w/o attachments w/o embed THEN returns null', () => {
-			const fakeMessage: DeepPartial<Message> = {
-				attachments: new Collection<string, MessageAttachment>(),
-				embeds: []
-			};
-
-			// @ts-expect-error We're only passing partial data to not mock an entire message
-			expect(utils.getImage(fakeMessage)).toBeNull();
+				expect(getImage(message)).toEqual(expected);
+			});
 		});
 	});
 
@@ -481,98 +313,19 @@ describe('Utils', () => {
 		});
 	});
 
-	describe('createPick', () => {
-		beforeAll(() => {
-			// Mock out random so the result is predictable
-			jest.spyOn(global.Math, 'random').mockReturnValue(0.123456789);
-		});
-
-		afterAll(() => {
-			(global.Math.random as any).mockRestore();
-		});
-
-		test('GIVEN simple picker THEN picks first value', () => {
-			const picker = utils.createPick([1, 2, 3, 4]);
-			expect(picker()).toEqual(1);
-		});
-	});
-
 	describe('pickRandom', () => {
 		beforeAll(() => {
 			// Mock out random so the result is predictable
-			jest.spyOn(global.Math, 'random').mockReturnValue(0.123456789);
+			vi.spyOn(Math, 'random').mockReturnValue(0.123456789);
 		});
 
 		afterAll(() => {
-			(global.Math.random as any).mockRestore();
+			(Math.random as any).mockRestore();
 		});
 
 		test('GIVEN simple picker THEN picks first value', () => {
 			const randomEntry = utils.pickRandom([1, 2, 3, 4]);
 			expect(randomEntry).toEqual(1);
-		});
-	});
-
-	describe('getFromPath', () => {
-		const obj = {
-			keyOne: 'valueOne',
-			keyTwo: {
-				nestedKeyOne: 'nestedValueOne'
-			}
-		};
-
-		test('GIVEN object and existing root level key THEN returns value', () => {
-			expect(utils.getFromPath(obj, 'keyOne')).toEqual('valueOne');
-		});
-
-		test('GIVEN object and non-existing root level key THEN returns undefined', () => {
-			expect(utils.getFromPath(obj, 'keyThree')).toBeUndefined();
-		});
-
-		test('GIVEN object and existing nested level key THEN returns value', () => {
-			expect(utils.getFromPath(obj, 'keyTwo.nestedKeyOne')).toEqual('nestedValueOne');
-		});
-
-		test('GIVEN object and non-existing nested level key THEN returns undefined', () => {
-			expect(utils.getFromPath(obj, 'keyTwo.nestedKeyTwo')).toBeUndefined();
-		});
-
-		test('GIVEN object and string array path THEN returns undefined', () => {
-			expect(utils.getFromPath(obj, ['keyTwo', 'nestedKeyOne'])).toEqual('nestedValueOne');
-		});
-	});
-
-	describe('gql', () => {
-		test('GIVEN gql tag THEN returns unmodified code', () => {
-			expect(utils.gql`
-			fragment one on two {
-				one
-				two
-			}`).toEqual(`
-			fragment one on two {
-				one
-				two
-			}`);
-		});
-
-		test('GIVEN nested gql tag THEN returns unmodified code', () => {
-			const nestableCode = utils.gql`
-				fragment two on three {
-					three
-					four
-				}`;
-
-			expect(utils.gql`
-			${nestableCode}
-			fragment one on two {
-				one
-				two
-			}`).toEqual(`
-			${nestableCode}
-			fragment one on two {
-				one
-				two
-			}`);
 		});
 	});
 
@@ -587,9 +340,9 @@ describe('Utils', () => {
 
 	describe('random', () => {
 		test('GIVEN 2 calls to random THEN returns floored mocked values', () => {
-			mockRandom(0.6);
+			const spy = vi.spyOn(Math, 'random').mockReturnValue(0.6);
 			expect(utils.random(50)).toEqual(30);
-			resetMockRandom();
+			spy.mockRestore();
 		});
 	});
 
@@ -600,7 +353,16 @@ describe('Utils', () => {
 				avatar: null
 			});
 
-			expect(utils.getDisplayAvatar('', user)).toEqual('https://cdn.discordapp.com/embed/avatars/1.png');
+			expect(utils.getDisplayAvatar(user)).toEqual('https://cdn.discordapp.com/embed/avatars/1.png');
+		});
+
+		test('GIVEN user without avatar THEN returns base avatar', () => {
+			const user = createUser({
+				discriminator: '0',
+				avatar: null
+			});
+
+			expect(utils.getDisplayAvatar(user)).toEqual('https://cdn.discordapp.com/embed/avatars/1.png');
 		});
 
 		test('GIVEN user with animated avatar THEN avatar gif url', () => {
@@ -609,8 +371,8 @@ describe('Utils', () => {
 				avatar: 'a_e583ad02d90ca9a5431bccec6c17b348'
 			});
 
-			expect(utils.getDisplayAvatar('268792781713965056', user)).toEqual(
-				'https://cdn.discordapp.com/avatars/268792781713965056/a_e583ad02d90ca9a5431bccec6c17b348.gif'
+			expect(utils.getDisplayAvatar(user)).toEqual(
+				'https://cdn.discordapp.com/avatars/266624760782258186/a_e583ad02d90ca9a5431bccec6c17b348.gif'
 			);
 		});
 
@@ -620,8 +382,8 @@ describe('Utils', () => {
 				avatar: '09b52e547fa797c47c7877cd10eb6ba8'
 			});
 
-			expect(utils.getDisplayAvatar('266624760782258186', user)).toEqual(
-				'https://cdn.discordapp.com/avatars/266624760782258186/09b52e547fa797c47c7877cd10eb6ba8.png'
+			expect(utils.getDisplayAvatar(user)).toEqual(
+				'https://cdn.discordapp.com/avatars/266624760782258186/09b52e547fa797c47c7877cd10eb6ba8.webp'
 			);
 		});
 
@@ -631,19 +393,30 @@ describe('Utils', () => {
 				avatar: '09b52e547fa797c47c7877cd10eb6ba8'
 			});
 
-			expect(utils.getDisplayAvatar('266624760782258186', user, { format: 'png' })).toEqual(
+			expect(utils.getDisplayAvatar(user, { extension: 'png' })).toEqual(
 				'https://cdn.discordapp.com/avatars/266624760782258186/09b52e547fa797c47c7877cd10eb6ba8.png'
 			);
 		});
 
-		test('GIVEN user with animated avatar AND options.format=gif THEN avatar png url', () => {
+		test('GIVEN user with animated avatar AND format "png" THEN avatar png url', () => {
 			const user = createUser({
 				discriminator: '0001',
 				avatar: 'a_e583ad02d90ca9a5431bccec6c17b348'
 			});
 
-			expect(utils.getDisplayAvatar('268792781713965056', user, { format: 'png' })).toEqual(
-				'https://cdn.discordapp.com/avatars/268792781713965056/a_e583ad02d90ca9a5431bccec6c17b348.png'
+			expect(utils.getDisplayAvatar(user, { extension: 'png' })).toEqual(
+				'https://cdn.discordapp.com/avatars/266624760782258186/a_e583ad02d90ca9a5431bccec6c17b348.gif'
+			);
+		});
+
+		test('GIVEN user with animated avatar AND format "png" AND forceStatic THEN avatar png url', () => {
+			const user = createUser({
+				discriminator: '0001',
+				avatar: 'a_e583ad02d90ca9a5431bccec6c17b348'
+			});
+
+			expect(utils.getDisplayAvatar(user, { extension: 'png', forceStatic: true })).toEqual(
+				'https://cdn.discordapp.com/avatars/266624760782258186/a_e583ad02d90ca9a5431bccec6c17b348.png'
 			);
 		});
 
@@ -653,8 +426,8 @@ describe('Utils', () => {
 				avatar: 'a_e583ad02d90ca9a5431bccec6c17b348'
 			});
 
-			expect(utils.getDisplayAvatar('268792781713965056', user, { size: 2048 })).toEqual(
-				'https://cdn.discordapp.com/avatars/268792781713965056/a_e583ad02d90ca9a5431bccec6c17b348.gif?size=2048'
+			expect(utils.getDisplayAvatar(user, { size: 2048 })).toEqual(
+				'https://cdn.discordapp.com/avatars/266624760782258186/a_e583ad02d90ca9a5431bccec6c17b348.gif?size=2048'
 			);
 		});
 	});

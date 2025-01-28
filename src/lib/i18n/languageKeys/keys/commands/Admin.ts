@@ -3,7 +3,6 @@ import { FT, T } from '#lib/types';
 
 export const ConfGet = FT<{ key: string; value: string }, string>('commands/admin:confGet');
 export const ConfGetNoExt = FT<{ key: string }, string>('commands/admin:confGetNoExt');
-export const ConfGuarded = FT<{ name: string }, string>('commands/admin:confGuarded');
 export const ConfMenuInvalidAction = T<string>('commands/admin:confMenuInvalidAction');
 export const ConfMenuInvalidKey = T<string>('commands/admin:confMenuInvalidKey');
 export const ConfMenuRenderAtFolder = FT<{ path: string }, string>('commands/admin:confMenuRenderAtFolder');
@@ -25,8 +24,6 @@ export const ConfExtended = T<LanguageHelpDisplayOptions>('commands/admin:confSe
 export const ConfSettingNotSet = T<string>('commands/admin:confSettingNotSet');
 export const ConfUpdated = FT<{ key: string; response: string }, string>('commands/admin:confUpdated');
 export const ConfDashboardOnlyKey = FT<{ key: string }, string>('commands/admin:confDashboardOnlyKey');
-export const HeapSnapshotDescription = T<string>('commands/admin:heapSnapshotDescription');
-export const HeapSnapshotExtended = T<LanguageHelpDisplayOptions>('commands/admin:heapSnapshotExtended');
 export const RoleSetAdded = FT<{ name: string; roles: string[] }, string>('commands/admin:rolesetAdded');
 export const RoleSetCreated = FT<{ name: string; roles: string[] }, string>('commands/admin:rolesetCreated');
 export const RoleSetDescription = T<string>('commands/admin:rolesetDescription');
@@ -38,5 +35,3 @@ export const RoleSetResetEmpty = T<string>('commands/admin:rolesetResetEmpty');
 export const RoleSetResetGroup = FT<{ name: string }, string>('commands/admin:rolesetResetGroup');
 export const RoleSetResetNotExists = FT<{ name: string }, string>('commands/admin:rolesetResetNotExists');
 export const RoleSetUpdated = FT<{ name: string }, string>('commands/admin:rolesetUpdated');
-export const UpdateDescription = T<string>('commands/admin:updateDescription');
-export const UpdateExtended = T<LanguageHelpDisplayOptions>('commands/admin:updateExtended');

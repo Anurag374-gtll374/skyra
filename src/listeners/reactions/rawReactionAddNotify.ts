@@ -1,83 +1,108 @@
-import { GuildSettings, readSettings } from '#lib/database';
+import { readSettings } from '#lib/database';
 import { api } from '#lib/discord/Api';
+import { getT } from '#lib/i18n';
 import { LanguageKeys } from '#lib/i18n/languageKeys';
-import { Events } from '#lib/types/Enums';
+import { Events } from '#lib/types';
+import type { LLRCData, LLRCDataEmoji } from '#utils/LongLivingReactionCollector';
+import { toErrorCodeResult } from '#utils/common';
 import { Colors } from '#utils/constants';
-import { getEmojiId, getEmojiReactionFormat, SerializedEmoji } from '#utils/functions';
-import type { LLRCData } from '#utils/LongLivingReactionCollector';
-import { twemoji } from '#utils/util';
-import Collection from '@discordjs/collection';
+import {
+	getCodeStyle,
+	getCustomEmojiUrl,
+	getEmojiId,
+	getEmojiReactionFormat,
+	getEncodedTwemoji,
+	getLogPrefix,
+	getLogger,
+	getTwemojiUrl,
+	type SerializedEmoji
+} from '#utils/functions';
+import { getFullEmbedAuthor } from '#utils/util';
+import { EmbedBuilder } from '@discordjs/builders';
 import { ApplyOptions } from '@sapphire/decorators';
-import { Listener, ListenerOptions } from '@sapphire/framework';
+import type { GuildTextBasedChannelTypes } from '@sapphire/discord.js-utilities';
+import { Listener } from '@sapphire/framework';
+import type { TFunction } from '@sapphire/plugin-i18next';
 import { isNullish } from '@sapphire/utilities';
-import type { APIUser } from 'discord-api-types/v9';
-import { MessageEmbed } from 'discord.js';
+import {
+	Collection,
+	PermissionFlagsBits,
+	RESTJSONErrorCodes,
+	inlineCode,
+	messageLink,
+	type RESTGetAPIChannelMessageReactionUsersResult
+} from 'discord.js';
 
-@ApplyOptions<ListenerOptions>({ event: Events.RawReactionAdd })
+@ApplyOptions<Listener.Options>({ event: Events.RawReactionAdd })
 export class UserListener extends Listener {
 	private readonly kCountCache = new Collection<string, InternalCacheEntry>();
-	private readonly kSyncCache = new Collection<string, Promise<InternalCacheEntry>>();
-	private kTimerSweeper: NodeJS.Timer | null = null;
+	private readonly kSyncCache = new Collection<string, Promise<InternalCacheEntry | null>>();
+	private kTimerSweeper: NodeJS.Timeout | null = null;
 
 	public async run(data: LLRCData, emoji: SerializedEmoji) {
-		const key = GuildSettings.Channels.Logs.Reaction;
-		const [allowedEmojis, logChannelId, twemojiEnabled, ignoreChannels, ignoreReactionAdd, ignoreAllEvents, t] = await readSettings(
-			data.guild,
-			(settings) => [
-				settings[GuildSettings.Selfmod.Reactions.Allowed],
-				settings[key],
-				settings[GuildSettings.Events.Twemoji],
-				settings[GuildSettings.Messages.IgnoreChannels],
-				settings[GuildSettings.Channels.Ignore.ReactionAdd],
-				settings[GuildSettings.Channels.Ignore.All],
-				settings.getLanguage()
-			]
-		);
+		// If the bot cannot fetch messages, do not proceed:
+		if (!this.#canFetchMessages(data.channel)) return;
+
+		const settings = await readSettings(data.guild);
+		const t = getT(settings.language);
+		const allowedEmojis = settings.selfmodReactionsAllowed;
 
 		const emojiId = getEmojiId(emoji);
-		if (allowedEmojis.some((allowedEmoji) => getEmojiId(allowedEmoji) === emojiId)) return;
+		if (allowedEmojis.some((allowedEmoji) => getEmojiId(allowedEmoji as SerializedEmoji) === emojiId)) return;
+
+		const targetChannelId = settings.channelsLogsReaction;
 
 		this.container.client.emit(Events.ReactionBlocked, data, emoji);
-		if (isNullish(logChannelId) || (!twemojiEnabled && data.emoji.id === null)) return;
+		if (isNullish(targetChannelId) || (!settings.eventsTwemojiReactions && data.emoji.id === null)) return;
 
-		if (ignoreChannels.includes(data.channel.id)) return;
-		if (ignoreReactionAdd.some((id) => id === data.channel.id || data.channel.parentId === id)) return;
-		if (ignoreAllEvents.some((id) => id === data.channel.id || data.channel.parentId === id)) return;
+		if (settings.messagesIgnoreChannels.includes(data.channel.id)) return;
+		if (settings.channelsIgnoreReactionAdd.some((id) => id === data.channel.id || data.channel.parentId === id)) return;
+		if (settings.channelsIgnoreAll.some((id) => id === data.channel.id || data.channel.parentId === id)) return;
 
-		if ((await this.retrieveCount(data, emoji)) > 1) return;
+		const count = await this.#retrieveCount(data, emoji);
+		if (isNullish(count) || count > 1) return;
 
 		const user = await this.container.client.users.fetch(data.userId);
 		if (user.bot) return;
 
-		this.container.client.emit(Events.GuildMessageLog, data.guild, logChannelId, key, () =>
-			new MessageEmbed()
-				.setColor(Colors.Green)
-				.setAuthor(`${user.tag} (${user.id})`, user.displayAvatarURL({ size: 128, format: 'png', dynamic: true }))
-				.setThumbnail(
-					data.emoji.id === null
-						? `https://twemoji.maxcdn.com/72x72/${twemoji(data.emoji.name!)}.png`
-						: `https://cdn.discordapp.com/emojis/${data.emoji.id}.${data.emoji.animated ? 'gif' : 'png'}?size=64`
-				)
-				.setDescription(
-					[
-						`**Emoji**: ${data.emoji.name}${data.emoji.id === null ? '' : ` [${data.emoji.id}]`}`,
-						`**Channel**: ${data.channel}`,
-						`**Message**: [${t(LanguageKeys.Misc.JumpTo)}](https://discord.com/channels/${data.guild.id}/${data.channel.id}/${
-							data.messageId
-						})`
-					].join('\n')
-				)
-				.setFooter(`${t(LanguageKeys.Events.Reactions.Reaction)} • ${data.channel.name}`)
-				.setTimestamp()
-		);
+		await getLogger(data.guild).send({
+			key: 'channelsLogsReaction',
+			channelId: targetChannelId,
+			makeMessage: () =>
+				new EmbedBuilder()
+					.setColor(Colors.Green)
+					.setAuthor(getFullEmbedAuthor(user))
+					.setThumbnail(this.#renderThumbnail(data.emoji))
+					.setDescription(this.#renderDescription(t, data))
+					.setFooter({ text: t(LanguageKeys.Events.Reactions.ReactionFooter) })
+					.setTimestamp()
+		});
 	}
 
-	public onUnload() {
+	public override onUnload() {
 		super.onUnload();
 		if (this.kTimerSweeper) clearInterval(this.kTimerSweeper);
 	}
 
-	protected async retrieveCount(data: LLRCData, emoji: SerializedEmoji) {
+	#renderThumbnail(emoji: LLRCDataEmoji) {
+		return emoji.id === null //
+			? getTwemojiUrl(getEncodedTwemoji(emoji.name!))
+			: getCustomEmojiUrl(emoji.id, emoji.animated);
+	}
+
+	#renderDescription(t: TFunction, data: LLRCData) {
+		return t(LanguageKeys.Events.Reactions.ReactionDescription, {
+			emoji: data.emoji.id ? `${data.emoji.name} (${inlineCode(data.emoji.id)})` : data.emoji.name,
+			message: messageLink(data.channel.id, data.messageId, data.guild.id)
+		});
+	}
+
+	#canFetchMessages(channel: GuildTextBasedChannelTypes) {
+		const permissions = channel.permissionsFor(this.container.client.id!);
+		return !isNullish(permissions) && permissions.has(PermissionFlagsBits.ViewChannel | PermissionFlagsBits.ReadMessageHistory);
+	}
+
+	async #retrieveCount(data: LLRCData, emoji: SerializedEmoji): Promise<number | null> {
 		const id = `${data.messageId}.${getEmojiId(emoji)}`;
 
 		// Pull from sync queue, and if it exists, await
@@ -93,14 +118,23 @@ export class UserListener extends Listener {
 		}
 
 		// Pull the reactions from the API
-		const promise = this.fetchCount(data, emoji, id);
+		const promise = this.#fetchCount(data, emoji, id);
 		this.kSyncCache.set(id, promise);
-		return (await promise).count;
+
+		const resolved = await promise;
+		return isNullish(resolved) ? null : resolved.count;
 	}
 
-	private async fetchCount(data: LLRCData, emoji: SerializedEmoji, id: string) {
-		const users = (await api().channels(data.channel.id).messages(data.messageId).reactions(getEmojiReactionFormat(emoji)).get()) as APIUser[];
-		const count: InternalCacheEntry = { count: users.length, sweepAt: Date.now() + 120000 };
+	async #fetchCount(data: LLRCData, emoji: SerializedEmoji, id: string): Promise<InternalCacheEntry | null> {
+		const result = await toErrorCodeResult(api().channels.getMessageReactions(data.channel.id, data.messageId, getEmojiReactionFormat(emoji)));
+		return result.match({
+			ok: (data) => this.#fetchCountOk(data, id),
+			err: (error) => this.#fetchCountErr(error)
+		});
+	}
+
+	#fetchCountOk(data: RESTGetAPIChannelMessageReactionUsersResult, id: string): InternalCacheEntry {
+		const count: InternalCacheEntry = { count: data.length, sweepAt: Date.now() + 120000 };
 		this.kCountCache.set(id, count);
 		this.kSyncCache.delete(id);
 
@@ -117,6 +151,22 @@ export class UserListener extends Listener {
 
 		return count;
 	}
+
+	#fetchCountErr(code: RESTJSONErrorCodes): InternalCacheEntry | null {
+		if (!UserListener.IgnoreReactionCountFetchErrors.includes(code)) {
+			this.container.logger.error(`${getLogPrefix(this)} ${getCodeStyle(code)} Failed to fetch message reaction count.`);
+		}
+
+		return null;
+	}
+
+	private static readonly IgnoreReactionCountFetchErrors = [
+		RESTJSONErrorCodes.UnknownMessage,
+		RESTJSONErrorCodes.UnknownChannel,
+		RESTJSONErrorCodes.UnknownGuild,
+		RESTJSONErrorCodes.UnknownEmoji,
+		RESTJSONErrorCodes.MissingAccess
+	];
 }
 
 interface InternalCacheEntry {

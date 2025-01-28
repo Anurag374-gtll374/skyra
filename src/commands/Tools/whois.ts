@@ -1,129 +1,224 @@
-import { SkyraEmbed } from '#lib/discord';
 import { LanguageKeys } from '#lib/i18n/languageKeys';
+import { getSupportedUserLanguageT } from '#lib/i18n/translate';
 import { SkyraCommand } from '#lib/structures';
 import type { GuildMessage } from '#lib/types';
-import { months, seconds } from '#utils/common';
-import { Colors, Emojis } from '#utils/constants';
-import { time, TimestampStyles } from '@discordjs/builders';
+import { PermissionsBits } from '#utils/bits';
+import { desc, maybeParseDate, months, seconds } from '#utils/common';
+import { Colors, EmojiData, Emojis } from '#utils/constants';
+import { addAutomaticFields } from '#utils/functions';
+import { getDisplayAvatar, getTag } from '#utils/util';
+import { ActionRowBuilder, ButtonBuilder, EmbedBuilder, TimestampStyles, time } from '@discordjs/builders';
 import { ApplyOptions } from '@sapphire/decorators';
-import { CommandOptionsRunTypeEnum } from '@sapphire/framework';
+import { ApplicationCommandRegistry, CommandOptionsRunTypeEnum } from '@sapphire/framework';
+import { map } from '@sapphire/iterator-utilities/map';
 import { send } from '@sapphire/plugin-editable-commands';
-import { PermissionFlagsBits } from 'discord-api-types/v9';
-import { GuildMember, Permissions, PermissionString, Role, User } from 'discord.js';
-import type { TFunction } from 'i18next';
+import { applyLocalizedBuilder, applyNameLocalizedBuilder, type TFunction } from '@sapphire/plugin-i18next';
+import { isNullishOrEmpty, isNullishOrZero } from '@sapphire/utilities';
+import {
+	ApplicationCommandType,
+	ButtonStyle,
+	ChatInputCommandInteraction,
+	GuildMember,
+	InteractionContextType,
+	MessageFlags,
+	PermissionFlagsBits,
+	UserContextMenuCommandInteraction,
+	bold,
+	chatInputApplicationCommandMention,
+	inlineCode,
+	roleMention,
+	type APIInteractionDataResolvedGuildMember,
+	type APIInteractionGuildMember,
+	type Role,
+	type Snowflake,
+	type User
+} from 'discord.js';
 
-const sortRanks = (x: Role, y: Role) => Number(y.position > x.position) || Number(x.position === y.position) - 1;
-const { FLAGS } = Permissions;
+const sortRanks = (x: Role, y: Role) => desc(x.position, y.position);
+
+const Root = LanguageKeys.Commands.Whois;
+
+type IncomingGuildMember = GuildMember | RawIncomingGuildMember;
+type RawIncomingGuildMember = APIInteractionGuildMember | APIInteractionDataResolvedGuildMember;
 
 @ApplyOptions<SkyraCommand.Options>({
 	aliases: ['userinfo', 'uinfo', 'user'],
-	description: LanguageKeys.Commands.Tools.WhoisDescription,
+	description: Root.Description,
 	detailedDescription: LanguageKeys.Commands.Tools.WhoisExtended,
 	requiredClientPermissions: [PermissionFlagsBits.EmbedLinks],
 	runIn: [CommandOptionsRunTypeEnum.GuildAny]
 })
 export class UserCommand extends SkyraCommand {
-	private readonly kAdministratorPermission = FLAGS.ADMINISTRATOR;
-	private readonly kKeyPermissions: [PermissionString, bigint][] = [
-		['BAN_MEMBERS', FLAGS.BAN_MEMBERS],
-		['KICK_MEMBERS', FLAGS.KICK_MEMBERS],
-		['MANAGE_CHANNELS', FLAGS.MANAGE_CHANNELS],
-		['MANAGE_EMOJIS_AND_STICKERS', FLAGS.MANAGE_EMOJIS_AND_STICKERS],
-		['MANAGE_GUILD', FLAGS.MANAGE_GUILD],
-		['MANAGE_MESSAGES', FLAGS.MANAGE_MESSAGES],
-		['MANAGE_NICKNAMES', FLAGS.MANAGE_NICKNAMES],
-		['MANAGE_ROLES', FLAGS.MANAGE_ROLES],
-		['MANAGE_WEBHOOKS', FLAGS.MANAGE_WEBHOOKS],
-		['MENTION_EVERYONE', FLAGS.MENTION_EVERYONE]
-	];
+	private readonly KeyPermissions = PermissionsBits.resolve([
+		PermissionFlagsBits.BanMembers,
+		PermissionFlagsBits.KickMembers,
+		PermissionFlagsBits.ManageChannels,
+		PermissionFlagsBits.ManageGuildExpressions,
+		PermissionFlagsBits.ManageGuild,
+		PermissionFlagsBits.ManageMessages,
+		PermissionFlagsBits.ManageNicknames,
+		PermissionFlagsBits.ManageRoles,
+		PermissionFlagsBits.ManageWebhooks,
+		PermissionFlagsBits.MentionEveryone
+	]);
 
-	public async messageRun(message: GuildMessage, args: SkyraCommand.Args) {
+	public override async messageRun(message: GuildMessage, args: SkyraCommand.Args) {
 		const user = args.finished ? message.author : await args.pick('userName');
 		const member = await message.guild.members.fetch(user.id).catch(() => null);
 
-		const embed = member ? this.member(args.t, member) : this.user(args.t, user);
-		return send(message, { embeds: [embed] });
+		return send(message, {
+			...this.sharedRun(args.t, user, member),
+			content: args.t(LanguageKeys.Commands.Shared.DeprecatedMessage, {
+				command: chatInputApplicationCommandMention(this.name, this.getGlobalCommandId())
+			})
+		});
+	}
+
+	public override async chatInputRun(interaction: ChatInputCommandInteraction) {
+		const user = interaction.options.getUser('user', true);
+		const member = interaction.options.getMember('user');
+
+		return interaction.reply({
+			...this.sharedRun(getSupportedUserLanguageT(interaction), user, member),
+			flags: MessageFlags.Ephemeral
+		});
+	}
+
+	public override async contextMenuRun(interaction: UserContextMenuCommandInteraction) {
+		const user = interaction.targetUser;
+		const member = interaction.targetMember;
+
+		return interaction.reply({
+			...this.sharedRun(getSupportedUserLanguageT(interaction), user, member),
+			flags: MessageFlags.Ephemeral
+		});
+	}
+
+	public override registerApplicationCommands(registry: ApplicationCommandRegistry) {
+		registry.registerChatInputCommand(
+			(builder) =>
+				applyLocalizedBuilder(builder, Root.Name, Root.Description) //
+					.setContexts(InteractionContextType.Guild)
+					.addUserOption((option) => applyLocalizedBuilder(option, Root.User).setRequired(true)),
+			{
+				idHints: [
+					'1205923078627000381', // skyra production
+					'1277288918756233298' // skyra-beta production
+				]
+			}
+		);
+
+		registry.registerContextMenuCommand(
+			(builder) =>
+				applyNameLocalizedBuilder(builder, Root.ContextMenuName) //
+					.setType(ApplicationCommandType.User)
+					.setContexts(InteractionContextType.Guild),
+			{
+				idHints: [
+					'1205923078627000382', // skyra production
+					'1277288994077409370' // skyra-beta production
+				]
+			}
+		);
+	}
+
+	private sharedRun(t: TFunction, user: User, member: IncomingGuildMember | null) {
+		const embed = member ? this.member(t, member, user) : this.user(t, user);
+		return { embeds: [embed], components: [this.getComponentRow(t, user)] };
 	}
 
 	private user(t: TFunction, user: User) {
-		const userCreatedAtTimestampSeconds = seconds.fromMilliseconds(user.createdTimestamp);
-
-		const titles = t(LanguageKeys.Commands.Tools.WhoisUserTitles);
-		const fields = t(LanguageKeys.Commands.Tools.WhoisUserFields, {
-			user,
-			userCreatedAt: time(userCreatedAtTimestampSeconds, TimestampStyles.ShortDateTime),
-			userCreatedAtOffset: time(userCreatedAtTimestampSeconds, TimestampStyles.RelativeTime)
-		});
-
-		return new SkyraEmbed()
+		return new EmbedBuilder()
 			.setColor(Colors.White)
-			.setThumbnail(user.displayAvatarURL({ size: 256, format: 'png', dynamic: true }))
-			.setDescription(this.getUserInformation(user))
-			.addField(titles.createdAt, fields.createdAt)
-			.setFooter(fields.footer, this.container.client.user!.displayAvatarURL({ size: 128, format: 'png', dynamic: true }))
-			.setTimestamp();
+			.setThumbnail(getDisplayAvatar(user, { size: 256 }))
+			.setDescription(this.getUserInformation(t, user));
 	}
 
-	private member(t: TFunction, member: GuildMember) {
-		const userCreatedAtTimestampSeconds = seconds.fromMilliseconds(member.user.createdTimestamp);
-		const memberJoinedAtTimestampSeconds = seconds.fromMilliseconds(member.joinedTimestamp!);
+	private member(t: TFunction, member: IncomingGuildMember, user: User) {
+		const isCached = member instanceof GuildMember;
+		const displayColor = isCached ? member.displayColor || Colors.White : Colors.White;
+		const embed = new EmbedBuilder()
+			.setColor(displayColor)
+			.setThumbnail(getDisplayAvatar(user, { size: 256 }))
+			.setDescription(this.getMemberInformation(t, member, user));
 
-		const titles = t(LanguageKeys.Commands.Tools.WhoisMemberTitles);
-		const fields = t(LanguageKeys.Commands.Tools.WhoisMemberFields, {
-			member,
-			memberCreatedAt: time(userCreatedAtTimestampSeconds, TimestampStyles.ShortDateTime),
-			memberCreatedAtOffset: time(userCreatedAtTimestampSeconds, TimestampStyles.RelativeTime),
-			memberJoinedAt: time(memberJoinedAtTimestampSeconds, TimestampStyles.ShortDateTime),
-			memberJoinedAtOffset: time(memberJoinedAtTimestampSeconds, TimestampStyles.RelativeTime)
-		});
-
-		const embed = new SkyraEmbed()
-			.setColor(member.displayColor || Colors.White)
-			.setThumbnail(member.user.displayAvatarURL({ size: 256, format: 'png', dynamic: true }))
-			.setDescription(this.getUserInformation(member.user, this.getBoostIcon(member.premiumSinceTimestamp)))
-			.addField(titles.joined, member.joinedTimestamp ? fields.joinedWithTimestamp : fields.joinedUnknown, true)
-			.addField(titles.createdAt, fields.createdAt, true)
-			.setFooter(fields.footer, this.container.client.user!.displayAvatarURL({ size: 128, format: 'png', dynamic: true }))
-			.setTimestamp();
-
-		this.applyMemberRoles(t, member, embed);
+		this.applyMemberRoles(t, isCached ? this.getGuildMemberRoles(member) : this.getRawMemberRoles(member), embed);
 		this.applyMemberKeyPermissions(t, member, embed);
 		return embed;
 	}
 
-	private getUserInformation(user: User, extras = ''): string {
-		const bot = user.bot ? ` ${Emojis.Bot}` : '';
-		const avatar = `[Avatar ${Emojis.Frame}](${user.displayAvatarURL({ size: 4096, format: 'png', dynamic: true })})`;
-		return `**${user.tag}**${bot} - ${user.toString()}${extras} - ${avatar}`;
+	private getUserInformation(t: TFunction, user: User, extras = ''): string {
+		const bot = user.bot ? ` ${Emojis.IntegrationIcon}` : '';
+		const header = `${user.toString()} - ${bold(getTag(user))}${bot}${extras} (${inlineCode(user.id)})`;
+		const description = t(Root.EmbedDescription, {
+			id: user.id,
+			createdAt: time(seconds.fromMilliseconds(user.createdTimestamp), TimestampStyles.RelativeTime)
+		});
+		return `${header}\n\n${description}`;
 	}
 
-	private applyMemberRoles(t: TFunction, member: GuildMember, embed: SkyraEmbed) {
-		if (member.roles.cache.size <= 1) return;
+	private getMemberInformation(t: TFunction, member: IncomingGuildMember, user: User): string {
+		const isCached = member instanceof GuildMember;
+		const premiumSince = isCached ? member.premiumSinceTimestamp : maybeParseDate(member.premium_since);
+		const joinedAt = isCached ? member.joinedTimestamp : maybeParseDate(member.joined_at);
 
-		const roles = member.roles.cache.sorted(sortRanks);
-		roles.delete(member.guild.id);
-		embed.splitFields(t(LanguageKeys.Commands.Tools.WhoisMemberRoles, { count: roles.size }), [...roles.values()].join(' '));
+		const header = this.getUserInformation(t, user, this.getBoostIcon(premiumSince));
+		const description = t(Root.EmbedMemberDescription, {
+			joinedAt: time(seconds.fromMilliseconds(joinedAt!), TimestampStyles.RelativeTime)
+		});
+		return `${header}\n${description}`;
 	}
 
-	private applyMemberKeyPermissions(t: TFunction, member: GuildMember, embed: SkyraEmbed) {
-		if (member.permissions.has(this.kAdministratorPermission)) {
-			embed.addField(t(LanguageKeys.Commands.Tools.WhoisMemberPermissions), t(LanguageKeys.Commands.Tools.WhoisMemberPermissionsAll));
+	private applyMemberRoles(t: TFunction, roles: string[] | null, embed: EmbedBuilder) {
+		if (isNullishOrEmpty(roles)) return;
+
+		addAutomaticFields(embed, t(Root.RolesTitle, { count: roles.length }), roles.join(' '));
+	}
+
+	private getGuildMemberRoles(member: GuildMember) {
+		const roles = member.roles.cache;
+		// If the member has @everyone or no roles, return null:
+		if (roles.size <= 1) return null;
+
+		const sorted = roles.sorted(sortRanks);
+		sorted.delete(member.guild.id);
+		return sorted.map((role) => role.toString());
+	}
+
+	private getRawMemberRoles(member: RawIncomingGuildMember) {
+		// We cannot sort the roles because we do not have the guild, so we just map them:
+		return member.roles.map((id) => roleMention(id));
+	}
+
+	private applyMemberKeyPermissions(t: TFunction, member: IncomingGuildMember, embed: EmbedBuilder) {
+		const bitfield = this.getMemberPermissions(member);
+
+		// If the member has Administrator, add a field indicating the member
+		// has all permissions and return:
+		if (PermissionsBits.has(bitfield, PermissionFlagsBits.Administrator)) {
+			embed.addFields({ name: t(Root.PermissionsTitle), value: t(Root.PermissionsAll) });
 			return;
 		}
 
-		const permissions: string[] = [];
-		for (const [name, bit] of this.kKeyPermissions) {
-			if (member.permissions.has(bit)) permissions.push(t(`permissions:${name}`));
-		}
+		// Create an intersection between the permissions the member has and the
+		// key permissions, if there are no permissions, return, else add a field
+		// with the permissions:
+		const intersection = PermissionsBits.intersection(bitfield, this.KeyPermissions);
+		if (intersection === 0n) return;
 
-		if (permissions.length > 0) {
-			embed.addField(t(LanguageKeys.Commands.Tools.WhoisMemberPermissions), permissions.join(', '));
-		}
+		embed.addFields({
+			name: t(Root.PermissionsTitle),
+			value: [...map(PermissionsBits.toKeys(intersection), (name) => t(`permissions:${name}`))].join(', ')
+		});
+	}
+
+	private getMemberPermissions(member: IncomingGuildMember): bigint {
+		const { permissions } = member;
+		return typeof permissions === 'string' ? BigInt(permissions) : permissions.bitfield;
 	}
 
 	private getBoostIcon(boostingSince: number | null): string {
-		if (boostingSince === null || boostingSince <= 0) return '';
-		return ` ${this.getBoostEmoji(Date.now() - boostingSince)}`;
+		return isNullishOrZero(boostingSince) ? '' : ` ${this.getBoostEmoji(Date.now() - boostingSince)}`;
 	}
 
 	private getBoostEmoji(duration: number): string {
@@ -136,5 +231,26 @@ export class UserCommand extends SkyraCommand {
 		if (duration >= months(3)) return Emojis.BoostLevel3;
 		if (duration >= months(2)) return Emojis.BoostLevel2;
 		return Emojis.BoostLevel1;
+	}
+
+	private getComponentRow(t: TFunction, user: User) {
+		return new ActionRowBuilder<ButtonBuilder>() //
+			.addComponents(this.getAvatarButton(t, getDisplayAvatar(user, { size: 4096 })), this.getProfileLinkButton(t, user.id));
+	}
+
+	private getAvatarButton(t: TFunction, url: string) {
+		return new ButtonBuilder() //
+			.setStyle(ButtonStyle.Link)
+			.setEmoji(EmojiData.MessageAttachmentIcon)
+			.setLabel(t(Root.ButtonAvatar))
+			.setURL(url);
+	}
+
+	private getProfileLinkButton(t: TFunction, id: Snowflake) {
+		return new ButtonBuilder() //
+			.setStyle(ButtonStyle.Link)
+			.setEmoji(EmojiData.MembersIcon)
+			.setLabel(t(Root.ButtonProfile))
+			.setURL(`discord://-/users/${id}`);
 	}
 }

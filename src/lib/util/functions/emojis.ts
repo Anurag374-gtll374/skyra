@@ -1,6 +1,40 @@
 import { formatEmoji } from '@discordjs/builders';
 import { FormattedCustomEmojiWithGroups, TwemojiRegex } from '@sapphire/discord-utilities';
+import { container } from '@sapphire/framework';
 import { isNullish } from '@sapphire/utilities';
+
+// Based on the identifiers at https://cdn.jsdelivr.net/gh/twitter/twemoji/assets/72x72/
+export type EncodedTwemoji = `${1 | 2 | 3}${string}` | 'a9' | 'ae' | 'e50a';
+
+// Hacky workaround for codes Discord and Windows use that don't exist on Twemoji's CDN.
+const TwemojiExceptions = {
+	'\u2764\ufe0f': '2764' // (❤️)
+} as Record<string, EncodedTwemoji>;
+
+/**
+ * Transforms the given emoji to a code point string that can be used for the CDN.
+ * @param emoji The emoji to encode
+ * @example
+ * ```typescript
+ * twemoji('😃');
+ * // → '1f603'
+ * ```
+ */
+export function getEncodedTwemoji(emoji: string): EncodedTwemoji {
+	return TwemojiExceptions[emoji] ?? [...emoji].map((point) => point.codePointAt(0)!.toString(16)).join('-');
+}
+
+/**
+ * Gets the CDN URL for a Twemoji.
+ * @param emoji The encoded Twemoji to use.
+ */
+export function getTwemojiUrl<E extends EncodedTwemoji>(emoji: E) {
+	return `https://cdn.jsdelivr.net/gh/twitter/twemoji/assets/72x72/${emoji}.png` as const;
+}
+
+export function getCustomEmojiUrl(id: string, animated: boolean) {
+	return container.client.rest.cdn.emoji(id, { extension: animated ? 'gif' : 'png', size: 64 });
+}
 
 interface EmojiObjectPartial {
 	name: string | null;
@@ -76,7 +110,7 @@ export function getEmojiTextFormat(emoji: SerializedEmoji): string {
  * Formats an emoji in the format that we can use to for reactions on Discord messages.
  */
 export function getEmojiReactionFormat(emoji: SerializedEmoji): string {
-	return isSerializedTwemoji(emoji) ? emoji : `_:${emoji.slice(1)}`;
+	return isSerializedTwemoji(emoji) ? decodeURIComponent(emoji) : `emoji:${emoji.slice(1)}`;
 }
 
 /**
@@ -115,12 +149,5 @@ export function getEmojiObject(emoji: string): EmojiObject | null {
 export function resolveEmojiId(emoji: EmojiObject | SerializedEmoji): string {
 	if (isNullish(emoji)) return '';
 
-	return typeof emoji === 'string' ? getEmojiId(emoji) : emoji.id ?? encodeURIComponent(emoji.name!);
-}
-
-/**
- * Compared whether the identifiers for both emojis are the same, ignoring name and animated.
- */
-export function areEmojisEqual(a: EmojiObject | SerializedEmoji, b: EmojiObject | SerializedEmoji) {
-	return resolveEmojiId(a) === resolveEmojiId(b);
+	return typeof emoji === 'string' ? getEmojiId(emoji) : (emoji.id ?? encodeURIComponent(emoji.name!));
 }

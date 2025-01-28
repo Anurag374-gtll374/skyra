@@ -5,14 +5,8 @@
 		"outDir": "../dist",
 		"rootDir": ".",
 		"baseUrl": ".",
-		"paths": {
-			"#utils/*": ["lib/util/*"],
-			"#lib/audio": ["audio/lib"],
-			"#lib/*": ["lib/*"],
-			"#languages": ["languages/index"],
-			"#root/*": ["*"]
-		},
-		"composite": true
+		"resolvePackageJsonImports": true,
+		"skipLibCheck": true
 	},
 	"include": [".", "./**/*.json"],
 	"exclude": ["./tsconfig.json"]

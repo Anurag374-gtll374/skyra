@@ -20,6 +20,33 @@ seconds.fromMilliseconds = (milliseconds: number): number => {
 };
 
 /**
+ * Converts a number of minutes to seconds.
+ * @param minutes The amount of minutes
+ * @returns The amount of seconds `minutes` equals to.
+ */
+seconds.fromMinutes = (minutes: number): number => {
+	return minutes * 60;
+};
+
+/**
+ * Converts a number of hours to seconds.
+ * @param hours The amount of hours
+ * @returns The amount of seconds `hours` equals to.
+ */
+seconds.fromHours = (hours: number): number => {
+	return hours * 60 * 60;
+};
+
+/**
+ * Converts a number of days to seconds.
+ * @param days The amount of days
+ * @returns The amount of seconds `days` equals to.
+ */
+seconds.fromDays = (days: number): number => {
+	return days * 60 * 60 * 24;
+};
+
+/**
  * Converts a number of minutes to milliseconds.
  * @param minutes The amount of minutes
  * @returns The amount of milliseconds `minutes` equals to.
@@ -27,6 +54,15 @@ seconds.fromMilliseconds = (milliseconds: number): number => {
 export function minutes(minutes: number): number {
 	return minutes * Time.Minute;
 }
+
+/**
+ * Converts a number of minutes to seconds.
+ * @param value The amount of minutes
+ * @returns The amount of seconds `value` equals to.
+ */
+minutes.toSeconds = (value: number): number => {
+	return roundNumber(minutes(value) / Time.Second);
+};
 
 /**
  * Converts a number of hours to milliseconds.

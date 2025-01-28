@@ -1,91 +1,104 @@
-import { GuildSettings, readSettings, writeSettings } from '#lib/database';
+import { readSettings, writeSettingsTransaction } from '#lib/database';
 import { LanguageKeys } from '#lib/i18n/languageKeys';
-import { SkyraCommand } from '#lib/structures';
-import type { GuildMessage } from '#lib/types';
-import { PermissionLevels } from '#lib/types/Enums';
+import { SkyraSubcommand } from '#lib/structures';
+import { PermissionLevels, type GuildMessage } from '#lib/types';
 import { ApplyOptions } from '@sapphire/decorators';
 import { CommandOptionsRunTypeEnum } from '@sapphire/framework';
 import { send } from '@sapphire/plugin-editable-commands';
 
-@ApplyOptions<SkyraCommand.Options>({
+@ApplyOptions<SkyraSubcommand.Options>({
 	aliases: ['mcc'],
 	description: LanguageKeys.Commands.Management.ManageCommandChannelDescription,
 	detailedDescription: LanguageKeys.Commands.Management.ManageCommandChannelExtended,
 	permissionLevel: PermissionLevels.Administrator,
 	runIn: [CommandOptionsRunTypeEnum.GuildAny],
-	subCommands: ['add', 'remove', 'reset', { input: 'show', default: true }]
+	subcommands: [
+		{ name: 'add', messageRun: 'add' },
+		{ name: 'remove', messageRun: 'remove' },
+		{ name: 'reset', messageRun: 'reset' },
+		{ name: 'show', messageRun: 'show', default: true }
+	]
 })
-export class UserCommand extends SkyraCommand {
-	public async add(message: GuildMessage, args: SkyraCommand.Args) {
+export class UserCommand extends SkyraSubcommand {
+	public async add(message: GuildMessage, args: SkyraSubcommand.Args) {
 		const channel = await args.pick('textChannelName');
 		const command = await args.pick('command');
-		await writeSettings(message.guild, (settings) => {
-			const disabledCommandsChannels = settings[GuildSettings.DisabledCommandChannels];
-			const indexOfChannel = disabledCommandsChannels.findIndex((e) => e.channel === channel.id);
 
-			if (indexOfChannel === -1) {
-				settings[GuildSettings.DisabledCommandChannels].push({ channel: channel.id, commands: [command.name] });
-			} else {
-				const disabledCommandChannel = disabledCommandsChannels[indexOfChannel];
-				if (disabledCommandChannel.commands.includes(command.name))
-					this.error(LanguageKeys.Commands.Management.ManageCommandChannelAddAlreadySet);
+		using trx = await writeSettingsTransaction(message.guild);
 
-				settings[GuildSettings.DisabledCommandChannels][indexOfChannel].commands.push(command.name);
+		const index = trx.settings.disabledCommandsChannels.findIndex((entry) => entry.channel === channel.id);
+		if (index === -1) {
+			trx.write({
+				disabledCommandsChannels: trx.settings.disabledCommandsChannels.concat({ channel: channel.id, commands: [command.name] })
+			});
+		} else {
+			const entry = trx.settings.disabledCommandsChannels[index];
+			if (entry.commands.includes(command.name)) {
+				this.error(LanguageKeys.Commands.Management.ManageCommandChannelAddAlreadySet);
 			}
-		});
+
+			trx.write({
+				disabledCommandsChannels: trx.settings.disabledCommandsChannels.with(index, {
+					channel: channel.id,
+					commands: entry.commands.concat(command.name)
+				})
+			});
+		}
+
+		await trx.submit();
 
 		const content = args.t(LanguageKeys.Commands.Management.ManageCommandChannelAdd, { channel: channel.toString(), command: command.name });
 		return send(message, content);
 	}
 
-	public async remove(message: GuildMessage, args: SkyraCommand.Args) {
+	public async remove(message: GuildMessage, args: SkyraSubcommand.Args) {
 		const channel = await args.pick('textChannelName');
 		const command = await args.pick('command');
-		await writeSettings(message.guild, (settings) => {
-			const disabledCommandsChannels = settings[GuildSettings.DisabledCommandChannels];
-			const indexOfChannel = disabledCommandsChannels.findIndex((e) => e.channel === channel.id);
 
-			if (indexOfChannel === -1) {
-				this.error(LanguageKeys.Commands.Management.ManageCommandChannelRemoveNotSet, { channel: channel.toString() });
-			}
+		using trx = await writeSettingsTransaction(message.guild);
 
-			const disabledCommandChannel = disabledCommandsChannels[indexOfChannel];
-			const indexOfDisabledCommand = disabledCommandChannel.commands.indexOf(command.name);
+		const index = trx.settings.disabledCommandsChannels.findIndex((entry) => entry.channel === channel.id);
+		if (index === -1) {
+			this.error(LanguageKeys.Commands.Management.ManageCommandChannelRemoveNotSet, { channel: channel.toString() });
+		}
 
-			if (indexOfDisabledCommand !== -1) {
-				if (disabledCommandChannel.commands.length > 1) {
-					settings[GuildSettings.DisabledCommandChannels][indexOfChannel].commands.splice(indexOfDisabledCommand, 1);
-				} else {
-					settings[GuildSettings.DisabledCommandChannels].splice(indexOfChannel, 1);
-				}
-			}
-		});
+		const entry = trx.settings.disabledCommandsChannels[index];
+		const commandIndex = entry.commands.indexOf(command.name);
+		if (commandIndex === -1) {
+			this.error(LanguageKeys.Commands.Management.ManageCommandChannelRemoveNotSet, { channel: channel.toString() });
+		}
+
+		const disabledCommandsChannels =
+			entry.commands.length === 1
+				? trx.settings.disabledCommandsChannels.toSpliced(index, 1)
+				: trx.settings.disabledCommandsChannels.with(index, { channel: channel.id, commands: entry.commands.toSpliced(commandIndex, 1) });
+		await trx.write({ disabledCommandsChannels }).submit();
 
 		const content = args.t(LanguageKeys.Commands.Management.ManageCommandChannelRemove, { channel: channel.toString(), command: command.name });
 		return send(message, content);
 	}
 
-	public async reset(message: GuildMessage, args: SkyraCommand.Args) {
+	public async reset(message: GuildMessage, args: SkyraSubcommand.Args) {
 		const channel = await args.pick('textChannelName');
-		await writeSettings(message.guild, (settings) => {
-			const disabledCommandsChannels = settings[GuildSettings.DisabledCommandChannels];
-			const entryIndex = disabledCommandsChannels.findIndex((e) => e.channel === channel.id);
 
-			if (entryIndex === -1) {
-				this.error(LanguageKeys.Commands.Management.ManageCommandChannelResetEmpty);
-			}
+		using trx = await writeSettingsTransaction(message.guild);
 
-			settings[GuildSettings.DisabledCommandChannels].splice(entryIndex, 1);
-		});
+		const index = trx.settings.disabledCommandsChannels.findIndex((entry) => entry.channel === channel.id);
+		if (index === -1) {
+			this.error(LanguageKeys.Commands.Management.ManageCommandChannelResetEmpty);
+		}
+
+		await trx.write({ disabledCommandsChannels: trx.settings.disabledCommandsChannels.toSpliced(index, 1) }).submit();
 
 		const content = args.t(LanguageKeys.Commands.Management.ManageCommandChannelReset, { channel: channel.toString() });
 		return send(message, content);
 	}
 
-	public async show(message: GuildMessage, args: SkyraCommand.Args) {
+	public async show(message: GuildMessage, args: SkyraSubcommand.Args) {
 		const channel = await args.pick('textChannelName');
-		const disabledCommandsChannels = await readSettings(message.guild, GuildSettings.DisabledCommandChannels);
+		const settings = await readSettings(message.guild);
 
+		const { disabledCommandsChannels } = settings;
 		const entry = disabledCommandsChannels.find((e) => e.channel === channel.id);
 		if (!entry?.commands.length) {
 			this.error(LanguageKeys.Commands.Management.ManageCommandChannelShowEmpty);

@@ -1,12 +1,14 @@
-import { GuildSettings, readSettings } from '#lib/database';
+import { readSettings } from '#lib/database';
 import { LanguageKeys } from '#lib/i18n/languageKeys';
 import { ModerationMessageListener } from '#lib/moderation';
 import type { GuildMessage } from '#lib/types';
 import { Colors } from '#utils/constants';
 import { deleteMessage, sendTemporaryMessage } from '#utils/functions';
+import { getFullEmbedAuthor } from '#utils/util';
+import { EmbedBuilder } from '@discordjs/builders';
 import { ApplyOptions } from '@sapphire/decorators';
-import { MessageEmbed, TextChannel } from 'discord.js';
-import type { TFunction } from 'i18next';
+import type { TFunction } from '@sapphire/plugin-i18next';
+import type { TextChannel } from 'discord.js';
 
 const enum CodeType {
 	DiscordGG,
@@ -16,13 +18,13 @@ const enum CodeType {
 @ApplyOptions<ModerationMessageListener.Options>({
 	reasonLanguageKey: LanguageKeys.Events.Moderation.Messages.ModerationInvites,
 	reasonLanguageKeyWithMaximum: LanguageKeys.Events.Moderation.Messages.ModerationInvitesWithMaximum,
-	keyEnabled: GuildSettings.Selfmod.Invites.Enabled,
-	ignoredChannelsPath: GuildSettings.Selfmod.Invites.IgnoredChannels,
-	ignoredRolesPath: GuildSettings.Selfmod.Invites.IgnoredRoles,
-	softPunishmentPath: GuildSettings.Selfmod.Invites.SoftAction,
+	keyEnabled: 'selfmodInvitesEnabled',
+	ignoredChannelsPath: 'selfmodInvitesIgnoredChannels',
+	ignoredRolesPath: 'selfmodInvitesIgnoredRoles',
+	softPunishmentPath: 'selfmodInvitesSoftAction',
 	hardPunishmentPath: {
-		action: GuildSettings.Selfmod.Invites.HardAction,
-		actionDuration: GuildSettings.Selfmod.Invites.HardActionDuration,
+		action: 'selfmodInvitesHardAction',
+		actionDuration: 'selfmodInvitesHardActionDuration',
 		adder: 'invites'
 	}
 })
@@ -43,7 +45,7 @@ export class UserModerationMessageListener extends ModerationMessageListener {
 			const identifier = this.getCodeIdentifier(source);
 
 			// If it has already been scanned, skip
-			const key = `${source}${code}`;
+			const key = `${source}/${code}`;
 			if (scanned.has(key)) continue;
 			scanned.add(key);
 
@@ -63,11 +65,11 @@ export class UserModerationMessageListener extends ModerationMessageListener {
 	}
 
 	protected onLogMessage(message: GuildMessage, t: TFunction, links: readonly string[]) {
-		return new MessageEmbed()
+		return new EmbedBuilder()
 			.setColor(Colors.Red)
-			.setAuthor(`${message.author.tag} (${message.author.id})`, message.author.displayAvatarURL({ size: 128, format: 'png', dynamic: true }))
+			.setAuthor(getFullEmbedAuthor(message.author, message.url))
 			.setDescription(t(LanguageKeys.Events.Moderation.Messages.InviteFilterLog, { links, count: links.length }))
-			.setFooter(`#${(message.channel as TextChannel).name} | ${t(LanguageKeys.Events.Moderation.Messages.InviteFooter)}`)
+			.setFooter({ text: `#${(message.channel as TextChannel).name} | ${t(LanguageKeys.Events.Moderation.Messages.InviteFooter)}` })
 			.setTimestamp();
 	}
 
@@ -76,13 +78,10 @@ export class UserModerationMessageListener extends ModerationMessageListener {
 	}
 
 	private async fetchIfAllowedInvite(message: GuildMessage, code: string) {
-		const [ignoredCodes, ignoredGuilds] = await readSettings(message.guild, [
-			GuildSettings.Selfmod.Invites.IgnoredCodes,
-			GuildSettings.Selfmod.Invites.IgnoredGuilds
-		]);
+		const settings = await readSettings(message.guild);
 
 		// Ignored codes take short-circuit.
-		if (ignoredCodes.includes(code)) return true;
+		if (settings.selfmodInvitesIgnoredCodes.includes(code)) return true;
 
 		const data = await message.client.invites.fetch(code);
 
@@ -96,7 +95,7 @@ export class UserModerationMessageListener extends ModerationMessageListener {
 		if (data.guildId === message.guild.id) return true;
 
 		// Invites from white-listed guilds should be allowed.
-		if (ignoredGuilds.includes(data.guildId)) return true;
+		if (settings.selfmodInvitesIgnoredGuilds.includes(data.guildId)) return true;
 
 		// Any other invite should not be allowed.
 		return false;

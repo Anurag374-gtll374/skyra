@@ -1,39 +1,32 @@
-import { GuildSettings, readSettings } from '#lib/database';
+import { readSettings, readSettingsNoMentionSpam } from '#lib/database';
+import { getT } from '#lib/i18n';
 import { LanguageKeys } from '#lib/i18n/languageKeys';
-import type { GuildMessage } from '#lib/types';
-import { Events } from '#lib/types/Enums';
+import { Events, type GuildMessage } from '#lib/types';
 import { getModeration } from '#utils/functions';
-import { TypeCodes } from '#utils/moderationConstants';
+import { TypeVariation } from '#utils/moderationConstants';
+import { getTag } from '#utils/util';
 import { Listener } from '@sapphire/framework';
 
 export class UserListener extends Listener {
 	public async run(message: GuildMessage) {
-		const [threshold, nms, t] = await readSettings(message.guild, (settings) => [
-			settings[GuildSettings.Selfmod.NoMentionSpam.MentionsAllowed],
-			settings.nms,
-			settings.getLanguage()
-		]);
-
+		const settings = await readSettings(message.guild);
 		const moderation = getModeration(message.guild);
 		const lock = moderation.createLock();
 		try {
+			const t = getT(settings.language);
 			await message.guild.members
-				.ban(message.author.id, { days: 0, reason: t(LanguageKeys.Events.NoMentionSpam.Footer) })
+				.ban(message.author.id, { deleteMessageSeconds: 0, reason: t(LanguageKeys.Events.NoMentionSpam.Footer) })
 				.catch((error) => this.container.client.emit(Events.Error, error));
 			await message.channel
-				.send(t(LanguageKeys.Events.NoMentionSpam.Message, { user: message.author }))
+				.send(t(LanguageKeys.Events.NoMentionSpam.Message, { userId: message.author.id, userTag: getTag(message.author) }))
 				.catch((error) => this.container.client.emit(Events.Error, error));
-			nms.delete(message.author.id);
 
+			const ctx = readSettingsNoMentionSpam(settings);
+			ctx.delete(message.author.id);
+
+			const threshold = settings.noMentionSpamMentionsAllowed;
 			const reason = t(LanguageKeys.Events.NoMentionSpam.ModerationLog, { threshold });
-			await moderation
-				.create({
-					userId: message.author.id,
-					moderatorId: process.env.CLIENT_ID,
-					type: TypeCodes.Ban,
-					reason
-				})
-				.create();
+			await moderation.insert(moderation.create({ user: message.author.id, type: TypeVariation.Ban, reason }));
 		} finally {
 			lock();
 		}

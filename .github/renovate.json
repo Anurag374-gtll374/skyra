@@ -1,16 +1,11 @@
 {
 	"$schema": "https://docs.renovatebot.com/renovate-schema.json",
-	"extends": ["github>sapphiredev/readme:sapphire-renovate"],
-	"labels": ["Meta: Dependencies"],
+	"extends": ["github>sapphiredev/.github:sapphire-renovate"],
 	"npm": {
 		"packageRules": [
 			{
-				"matchPackagePatterns": ["typeorm", "tslib", "colorette", "i18next"],
+				"matchPackagePatterns": ["@types/node"],
 				"enabled": false
-			},
-			{
-				"matchPackagePatterns": ["@influxdata"],
-				"groupName": "InfluxDB Dependencies"
 			}
 		]
 	}

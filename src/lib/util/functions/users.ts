@@ -1,16 +1,35 @@
-import { container } from '@sapphire/framework';
-import type { UserResolvable } from 'discord.js';
+import { Emojis } from '#utils/constants';
+import { userMention } from '@discordjs/builders';
+import { BitField } from '@sapphire/bitfield';
+import { UserFlags, type Snowflake } from 'discord.js';
 
-/**
- * Retrieves the global rank a user has.
- * @param resolvable The user to retrieve the rank from.
- * @returns The global rank the user has.
- */
-export async function fetchGlobalRank(resolvable: UserResolvable): Promise<number> {
-	const id = container.client.users.resolveId(resolvable);
-	if (id === null) throw new TypeError(`Cannot resolve ${resolvable} to a User.`);
+const ExtendedUserFlagBits = new BitField({
+	Quarantined: getExtendedBits(UserFlags.Quarantined),
+	Collaborator: getExtendedBits(UserFlags.Collaborator),
+	RestrictedCollaborator: getExtendedBits(UserFlags.RestrictedCollaborator)
+});
 
-	const list = await container.client.leaderboard.fetch();
-	const rank = list.get(id);
-	return rank ? rank.position : list.size;
+export function getModerationFlags(bitfield: number) {
+	return {
+		spammer: (bitfield & UserFlags.Spammer) === UserFlags.Spammer,
+		quarantined: ExtendedUserFlagBits.has(getExtendedBits(bitfield), ExtendedUserFlagBits.flags.Quarantined)
+	};
+}
+
+export function getModerationFlagsString(bitfield: number) {
+	const { spammer, quarantined } = getModerationFlags(bitfield);
+	if (spammer && quarantined) return Emojis.SpammerIcon + Emojis.QuarantinedIcon;
+	if (spammer) return Emojis.SpammerIcon;
+	if (quarantined) return Emojis.QuarantinedIcon;
+	return '';
+}
+
+export function getUserMentionWithFlagsString(bitfield: number, userId: Snowflake) {
+	const flags = getModerationFlagsString(bitfield);
+	const mention = userMention(userId);
+	return flags ? `${mention} ${flags}` : mention;
+}
+
+function getExtendedBits(bitfield: number) {
+	return (bitfield / (1 << 30)) | 0;
 }

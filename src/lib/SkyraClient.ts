@@ -1,123 +1,77 @@
-import { QueueClient, WebsocketHandler } from '#lib/audio';
-import { GuildSettings, SettingsManager, UserRepository } from '#lib/database';
-import { AnalyticsData, GiveawayManager, InviteStore, ScheduleManager } from '#lib/structures';
+import { SerializerStore } from '#lib/database';
+import { readSettings } from '#lib/database/settings/functions';
+import { GuildMemberFetchQueue } from '#lib/discord/GuildMemberFetchQueue';
+import { WorkerManager } from '#lib/moderation/workers/WorkerManager';
+import { ScheduleManager, TaskStore } from '#lib/schedule';
+import { AnalyticsData, InviteStore } from '#lib/structures';
+import type { LongLivingReactionCollector } from '#lib/util/LongLivingReactionCollector';
 import { CLIENT_OPTIONS, WEBHOOK_ERROR } from '#root/config';
 import { isGuildMessage } from '#utils/common';
-import { mainFolder } from '#utils/constants';
 import { Enumerable } from '@sapphire/decorators';
-import { container, SapphireClient } from '@sapphire/framework';
+import { SapphireClient, container } from '@sapphire/framework';
 import type { InternationalizationContext } from '@sapphire/plugin-i18next';
-import { Message, WebhookClient } from 'discord.js';
-import Redis from 'ioredis';
-import { join } from 'node:path';
-import { readSettings } from './database/settings/functions';
-import { GuildMemberFetchQueue } from './discord/GuildMemberFetchQueue';
-import { envIsDefined, envParseBoolean, envParseInteger, envParseString } from './env';
-import { WorkerManager } from './moderation/workers/WorkerManager';
-import { Leaderboard } from './util/Leaderboard';
-import type { LongLivingReactionCollector } from './util/LongLivingReactionCollector';
-import { Twitch } from './util/Notifications/Twitch';
+import { envParseBoolean } from '@skyra/env-utilities';
+import { WebhookClient, type Message } from 'discord.js';
 
 export class SkyraClient extends SapphireClient {
 	@Enumerable(false)
-	public dev = process.env.NODE_ENV !== 'production';
-
-	/**
-	 * The loaded Leaderboard singleton instance
-	 */
-	@Enumerable(false)
-	public leaderboard = new Leaderboard();
-
-	/**
-	 * The Giveaway manager
-	 */
-	@Enumerable(false)
-	public giveaways = new GiveawayManager();
+	public override dev = process.env.NODE_ENV !== 'production';
 
 	/**
 	 * The Schedule manager
 	 */
 	@Enumerable(false)
-	public schedules: ScheduleManager;
+	public override schedules: ScheduleManager;
 
 	/**
 	 * The webhook to use for the error event
 	 */
 	@Enumerable(false)
-	public webhookError: WebhookClient | null = WEBHOOK_ERROR ? new WebhookClient(WEBHOOK_ERROR) : null;
+	public override webhookError: WebhookClient | null = WEBHOOK_ERROR ? new WebhookClient(WEBHOOK_ERROR) : null;
 
 	/**
 	 * The invite store
 	 */
 	@Enumerable(false)
-	public invites = new InviteStore();
+	public override invites = new InviteStore();
 
 	@Enumerable(false)
-	public readonly audio: QueueClient | null;
+	public override readonly analytics: AnalyticsData | null;
 
 	@Enumerable(false)
-	public readonly analytics: AnalyticsData | null;
+	public override readonly guildMemberFetchQueue = new GuildMemberFetchQueue();
 
 	@Enumerable(false)
-	public readonly guildMemberFetchQueue = new GuildMemberFetchQueue();
-
-	@Enumerable(false)
-	public llrCollectors = new Set<LongLivingReactionCollector>();
-
-	@Enumerable(false)
-	public twitch = new Twitch();
-
-	@Enumerable(false)
-	public websocket = new WebsocketHandler();
+	public override llrCollectors = new Set<LongLivingReactionCollector>();
 
 	public constructor() {
 		super(CLIENT_OPTIONS);
 
+		container.stores.register(new SerializerStore());
+		container.stores.register(new TaskStore());
+
 		// Workers
 		container.workers = new WorkerManager();
-
-		container.settings = new SettingsManager();
 
 		// Analytics
 		this.schedules = new ScheduleManager();
 		container.schedule = this.schedules;
 
 		this.analytics = envParseBoolean('INFLUX_ENABLED') ? new AnalyticsData() : null;
-
-		if (envParseBoolean('AUDIO_ENABLED')) {
-			this.audio = new QueueClient(this.options.audio!, (guildId, packet) => {
-				const guild = this.guilds.cache.get(guildId);
-				return Promise.resolve(guild?.shard.send(packet));
-			});
-			this.stores.registerPath(join(mainFolder, 'audio'));
-		} else {
-			this.audio = null;
-		}
-
-		if (envIsDefined('REDIS_AFK_DB') && envParseBoolean('REDIS_ENABLED')) {
-			container.afk = new Redis({
-				host: envParseString('REDIS_HOST'),
-				port: envParseInteger('REDIS_PORT'),
-				db: envParseInteger('REDIS_AFK_DB'),
-				password: envParseString('REDIS_PASSWORD'),
-				lazyConnect: true
-			});
-		}
 	}
 
-	public async login(token?: string) {
+	public override async login(token?: string) {
 		await container.workers.start();
 		const loginResponse = await super.login(token);
 		await this.schedules.init();
 		return loginResponse;
 	}
 
-	public async destroy() {
+	public override async destroy() {
 		await container.workers.destroy();
 		this.guildMemberFetchQueue.destroy();
 		this.invites.destroy();
 		this.schedules.destroy();
-		UserRepository.destroy();
 		return super.destroy();
 	}
 
@@ -125,8 +79,10 @@ export class SkyraClient extends SapphireClient {
 	 * Retrieves the prefix for the guild.
 	 * @param message The message that gives context.
 	 */
-	public fetchPrefix = async (message: Message) => {
-		if (isGuildMessage(message)) return readSettings(message.guild, GuildSettings.Prefix);
+	public override fetchPrefix = async (message: Message) => {
+		if (isGuildMessage(message)) {
+			return (await readSettings(message.guild)).prefix;
+		}
 		return [process.env.CLIENT_PREFIX, ''] as readonly string[];
 	};
 
@@ -134,7 +90,7 @@ export class SkyraClient extends SapphireClient {
 	 * Retrieves the language key for the message.
 	 * @param message The message that gives context.
 	 */
-	public fetchLanguage = (message: InternationalizationContext) => {
-		return message.guild ? readSettings(message.guild, GuildSettings.Language) : 'en-US';
+	public fetchLanguage = async (message: InternationalizationContext) => {
+		return message.guild ? (await readSettings(message.guild)).language : 'en-US';
 	};
 }

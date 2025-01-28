@@ -1,32 +1,29 @@
-import type { GuildEntity, PermissionsNode } from '#lib/database/entities/GuildEntity';
-import { GuildSettings } from '#lib/database/keys';
+import type { PermissionsNode, ReadonlyGuildData } from '#lib/database/settings/types';
 import { matchAny } from '#lib/database/utils/matchers/Command';
 import { LanguageKeys } from '#lib/i18n/languageKeys';
 import type { SkyraCommand } from '#lib/structures';
-import Collection from '@discordjs/collection';
+import { resolveGuild } from '#utils/common';
 import { UserError } from '@sapphire/framework';
-import { arrayStrictEquals } from '@sapphire/utilities';
-import { GuildMember, Role, User } from 'discord.js';
-import type { IBaseManager } from '../base/IBaseManager';
+import { Collection, Role, type GuildMember, type User } from 'discord.js';
 
 export const enum PermissionNodeAction {
 	Allow,
 	Deny
 }
 
-type Nodes = readonly PermissionsNode[];
-type Node = Nodes[number];
+type PermissionNodeValueResolvable = Role | GuildMember | User;
 
-export class PermissionNodeManager implements IBaseManager {
-	// eslint-disable-next-line @typescript-eslint/explicit-member-accessibility
-	#settings: GuildEntity;
-	// eslint-disable-next-line @typescript-eslint/explicit-member-accessibility
-	#previous: Nodes = [];
-
+export class PermissionNodeManager {
 	private sorted = new Collection<string, PermissionsManagerNode>();
+	#cachedRawPermissionRoles: readonly PermissionsNode[] = [];
+	#cachedRawPermissionUsers: readonly PermissionsNode[] = [];
 
-	public constructor(settings: GuildEntity) {
-		this.#settings = settings;
+	public constructor(settings: ReadonlyGuildData) {
+		this.refresh(settings);
+	}
+
+	public settingsPropertyFor(target: PermissionNodeValueResolvable) {
+		return (target instanceof Role ? 'permissionsRoles' : 'permissionsUsers') satisfies keyof ReadonlyGuildData;
 	}
 
 	public run(member: GuildMember, command: SkyraCommand) {
@@ -37,86 +34,86 @@ export class PermissionNodeManager implements IBaseManager {
 		return this.sorted.has(roleId);
 	}
 
-	public add(target: Role | GuildMember | User, command: string, action: PermissionNodeAction) {
-		const key = target instanceof Role ? GuildSettings.Permissions.Roles : GuildSettings.Permissions.Users;
+	public add(target: PermissionNodeValueResolvable, command: string, action: PermissionNodeAction): readonly PermissionsNode[] {
+		const nodes = this.#getPermissionNodes(target);
 
-		const nodes = this.#settings[key];
 		const nodeIndex = nodes.findIndex((n) => n.id === target.id);
-
 		if (nodeIndex === -1) {
-			const node: Node = {
+			const node: PermissionsNode = {
 				id: target.id,
 				allow: action === PermissionNodeAction.Allow ? [command] : [],
 				deny: action === PermissionNodeAction.Deny ? [command] : []
 			};
 
-			this.#settings[key].push(node);
-		} else {
-			const previous = nodes[nodeIndex];
-			if (
-				(action === PermissionNodeAction.Allow && previous.allow.includes(command)) ||
-				(action === PermissionNodeAction.Deny && previous.deny.includes(command))
-			) {
-				throw new UserError({ identifier: LanguageKeys.Serializers.PermissionNodeDuplicatedCommand, context: { command } });
-			}
-
-			const node: Node = {
-				id: target.id,
-				allow: action === PermissionNodeAction.Allow ? previous.allow.concat(command) : previous.allow,
-				deny: action === PermissionNodeAction.Deny ? previous.deny.concat(command) : previous.deny
-			};
-
-			this.#settings[key][nodeIndex] = node;
+			return nodes.concat(node);
 		}
+
+		const previous = nodes[nodeIndex];
+		if (
+			(action === PermissionNodeAction.Allow && previous.allow.includes(command)) ||
+			(action === PermissionNodeAction.Deny && previous.deny.includes(command))
+		) {
+			throw new UserError({ identifier: LanguageKeys.Serializers.PermissionNodeDuplicatedCommand, context: { command } });
+		}
+
+		const node: PermissionsNode = {
+			id: target.id,
+			allow: action === PermissionNodeAction.Allow ? previous.allow.concat(command) : previous.allow,
+			deny: action === PermissionNodeAction.Deny ? previous.deny.concat(command) : previous.deny
+		};
+
+		return nodes.with(nodeIndex, node);
 	}
 
-	public remove(target: Role | GuildMember | User, command: string, action: PermissionNodeAction) {
-		const key = target instanceof Role ? GuildSettings.Permissions.Roles : GuildSettings.Permissions.Users;
-
-		const nodes = this.#settings[key];
+	public remove(target: PermissionNodeValueResolvable, command: string, action: PermissionNodeAction): readonly PermissionsNode[] {
+		const nodes = this.#getPermissionNodes(target);
 
 		const nodeIndex = nodes.findIndex((n) => n.id === target.id);
-		if (nodeIndex === -1) throw new UserError({ identifier: LanguageKeys.Commands.Management.PermissionNodesNodeNotExists });
+		if (nodeIndex === -1) {
+			throw new UserError({ identifier: LanguageKeys.Commands.Management.PermissionNodesNodeNotExists });
+		}
 
 		const property = this.getName(action);
 		const previous = nodes[nodeIndex];
 		const commandIndex = previous[property].indexOf(command);
-		if (commandIndex === -1) throw new UserError({ identifier: LanguageKeys.Commands.Management.PermissionNodesCommandNotExists });
+		if (commandIndex === -1) {
+			throw new UserError({ identifier: LanguageKeys.Commands.Management.PermissionNodesCommandNotExists });
+		}
 
-		const node: Nodes[number] = {
+		const node: PermissionsNode = {
 			id: target.id,
-			allow: 'allow' ? previous.allow.slice() : previous.allow,
-			deny: 'deny' ? previous.deny.slice() : previous.deny
+			allow: action === PermissionNodeAction.Allow ? previous.allow.toSpliced(commandIndex, 1) : previous.allow,
+			deny: action === PermissionNodeAction.Deny ? previous.deny.toSpliced(commandIndex, 1) : previous.deny
 		};
-		node[property].splice(commandIndex, 1);
 
-		this.#settings[key].splice(nodeIndex, 1, node);
+		return node.allow.length === 0 && node.deny.length === 0 //
+			? nodes.toSpliced(nodeIndex, 1)
+			: nodes.with(nodeIndex, node);
 	}
 
-	public reset(target: Role | GuildMember | User) {
-		const key = target instanceof Role ? GuildSettings.Permissions.Roles : GuildSettings.Permissions.Users;
+	public reset(target: PermissionNodeValueResolvable): readonly PermissionsNode[] {
+		const nodes = this.#getPermissionNodes(target);
 
-		const nodes = this.#settings[key];
 		const nodeIndex = nodes.findIndex((n) => n.id === target.id);
-
 		if (nodeIndex === -1) {
 			throw new UserError({ identifier: LanguageKeys.Commands.Management.PermissionNodesNodeNotExists, context: { target } });
 		}
 
-		this.#settings[key].splice(nodeIndex, 1);
+		return nodes.toSpliced(nodeIndex, 1);
 	}
 
-	public refresh() {
-		const nodes = this.#settings[GuildSettings.Permissions.Roles];
-		this.#previous = nodes.slice();
+	public refresh(settings: ReadonlyGuildData): readonly PermissionsNode[] {
+		const nodes = settings.permissionsRoles;
+		this.#cachedRawPermissionRoles = nodes;
+		this.#cachedRawPermissionUsers = settings.permissionsUsers;
 
 		if (nodes.length === 0) {
 			this.sorted.clear();
-			return;
+			return nodes;
 		}
 
 		// Generate sorted data and detect useless nodes to remove
-		const { pendingToAdd, pendingToRemove } = this.generateSorted(nodes);
+		const { pendingToAdd, pendingToRemove } = this.generateSorted(settings, nodes);
 
 		// Set up everything
 		const sorted = new Collection<string, PermissionsManagerNode>();
@@ -129,26 +126,23 @@ export class PermissionNodeManager implements IBaseManager {
 
 		this.sorted = sorted;
 
+		let copy: PermissionsNode[] | null = null;
+
 		// Delete redundant entries
 		for (const removedItem of pendingToRemove) {
 			const removedIndex = nodes.findIndex((element) => element.id === removedItem);
-			if (removedIndex !== -1) nodes.splice(removedIndex, 1);
+			if (removedIndex !== -1) {
+				copy ??= nodes.slice();
+				copy.splice(removedIndex, 1);
+			}
 		}
-	}
 
-	public onPatch() {
-		const nodes = this.#settings[GuildSettings.Permissions.Roles];
-		if (!arrayStrictEquals(this.#previous, nodes)) this.refresh();
-	}
-
-	public onRemove(): void {
-		this.sorted.clear();
-		this.#previous = [];
+		return copy ?? nodes;
 	}
 
 	private runUser(member: GuildMember, command: SkyraCommand) {
 		// Assume sorted data
-		const permissionNodeRoles = this.#settings.permissionsUsers;
+		const permissionNodeRoles = this.#cachedRawPermissionUsers;
 		const memberId = member.id;
 		for (const node of permissionNodeRoles) {
 			if (node.id !== memberId) continue;
@@ -172,8 +166,8 @@ export class PermissionNodeManager implements IBaseManager {
 		return null;
 	}
 
-	private generateSorted(nodes: readonly PermissionsNode[]) {
-		const { pendingToRemove, sortedRoles } = this.getSortedRoles(nodes);
+	private generateSorted(settings: ReadonlyGuildData, nodes: readonly PermissionsNode[]) {
+		const { pendingToRemove, sortedRoles } = this.getSortedRoles(settings, nodes);
 
 		const sortedNodes: PermissionsNode[] = [];
 		for (const sortedRole of sortedRoles.values()) {
@@ -189,8 +183,9 @@ export class PermissionNodeManager implements IBaseManager {
 		};
 	}
 
-	private getSortedRoles(rawNodes: readonly PermissionsNode[]) {
+	private getSortedRoles(settings: ReadonlyGuildData, rawNodes: readonly PermissionsNode[]) {
 		const ids = new Set(rawNodes.map((rawNode) => rawNode.id));
+		const guild = resolveGuild(settings.id);
 
 		// I know we should never rely on private methods, however, `Guild#_sortedRoles`
 		// exists in v13 and is called every time the `Role#position` getter is called,
@@ -208,7 +203,7 @@ export class PermissionNodeManager implements IBaseManager {
 		// already a performance killer.
 		//
 		// eslint-disable-next-line @typescript-eslint/dot-notation
-		const roles = this.#settings.guild['_sortedRoles']()
+		const roles = guild['_sortedRoles']()
 			// Set#delete returns `true` when the entry exists, so we will use this
 			// to automatically sweep the valid entries and leave the invalid ones out
 			.filter((role) => ids.delete(role.id));
@@ -231,6 +226,10 @@ export class PermissionNodeManager implements IBaseManager {
 			default:
 				throw new Error('Unreachable');
 		}
+	}
+
+	#getPermissionNodes(target: PermissionNodeValueResolvable): readonly PermissionsNode[] {
+		return target instanceof Role ? this.#cachedRawPermissionRoles : this.#cachedRawPermissionUsers;
 	}
 }
 

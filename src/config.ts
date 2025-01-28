@@ -1,74 +1,38 @@
-// Unless explicitly defined, set NODE_ENV as development:
-process.env.NODE_ENV ??= 'development';
-
 import { transformOauthGuildsAndUser } from '#lib/api/utils';
-import type { QueueClientOptions } from '#lib/audio';
-import { GuildSettings } from '#lib/database/keys';
 import { readSettings } from '#lib/database/settings';
-import { envParseArray, envParseBoolean, envParseInteger, envParseString } from '#lib/env';
 import { CATEGORIES as TRIVIA_CATEGORIES } from '#lib/games/TriviaManager';
-import { LanguageKeys } from '#lib/i18n/languageKeys';
-import type { ExcludeEnum } from '#lib/types/Utils';
 import { getHandler } from '#root/languages/index';
+import { minutes, seconds } from '#utils/common';
 import { Emojis, LanguageFormatters, rootFolder } from '#utils/constants';
 import type { ConnectionOptions } from '@influxdata/influxdb-client';
 import { LogLevel } from '@sapphire/framework';
 import type { ServerOptions, ServerOptionsAuth } from '@sapphire/plugin-api';
-import type { InternationalizationOptions } from '@sapphire/plugin-i18next';
-import { codeBlock, toTitleCase } from '@sapphire/utilities';
+import { i18next, type I18nextFormatter, type InternationalizationOptions } from '@sapphire/plugin-i18next';
+import { envIsDefined, envParseArray, envParseBoolean, envParseInteger, envParseString, setup } from '@skyra/env-utilities';
 import {
-	ActivitiesOptions,
-	ClientOptions,
-	DefaultMessageNotificationLevel,
-	ExplicitContentFilterLevel,
-	LimitedCollection,
+	ActivityType,
+	GatewayIntentBits,
+	GuildDefaultMessageNotifications,
+	GuildExplicitContentFilter,
+	GuildVerificationLevel,
 	Options,
-	Permissions,
-	PermissionString,
-	WebhookClientData
+	Partials,
+	PermissionFlagsBits,
+	TimestampStyles,
+	time,
+	type ActivitiesOptions,
+	type ClientOptions,
+	type LocaleString,
+	type OAuth2Scopes,
+	type WebhookClientData
 } from 'discord.js';
-import type { ActivityTypes } from 'discord.js/typings/enums';
-import { config } from 'dotenv-cra';
-import i18next, { FormatFunction, InterpolationOptions } from 'i18next';
+import type { InterpolationOptions } from 'i18next';
 import { join } from 'node:path';
 
 // Read config:
-config({
-	debug: process.env.DOTENV_DEBUG_ENABLED ? envParseBoolean('DOTENV_DEBUG_ENABLED') : undefined,
-	path: join(rootFolder, 'src', '.env')
-});
+setup(join(rootFolder, 'src', '.env'));
 
 export const OWNERS = envParseArray('CLIENT_OWNERS');
-export const SISTER_CLIENTS = envParseArray('SISTER_CLIENTS');
-
-function parseAudio(): QueueClientOptions | undefined {
-	if (!envParseBoolean('REDIS_ENABLED', false)) return undefined;
-	if (!envParseBoolean('AUDIO_ENABLED', false)) return undefined;
-
-	const host = envParseString('AUDIO_HOST');
-	const port = envParseInteger('AUDIO_PORT').toString();
-
-	return {
-		userID: envParseString('CLIENT_ID'),
-		password: envParseString('AUDIO_PASSWORD'),
-		redis: {
-			host: envParseString('REDIS_HOST'),
-			port: envParseInteger('REDIS_PORT'),
-			db: envParseInteger('REDIS_DB'),
-			password: envParseString('REDIS_PASSWORD')
-		},
-		hosts: {
-			rest: `http://${host}:${port}`,
-			ws: {
-				url: `ws://${host}:${port}`,
-				options: {
-					resumeKey: envParseString('AUDIO_RESUME_KEY'),
-					resumeTimeout: envParseInteger('AUDIO_RESUME_TIMEOUT')
-				}
-			}
-		}
-	};
-}
 
 export function parseAnalytics(): ConnectionOptions {
 	const url = envParseString('INFLUX_URL');
@@ -81,14 +45,14 @@ export function parseAnalytics(): ConnectionOptions {
 }
 
 function parseApiAuth(): ServerOptionsAuth | undefined {
-	if (!process.env.OAUTH_SECRET) return undefined;
+	if (!envIsDefined('OAUTH_SECRET')) return undefined;
 
 	return {
 		id: envParseString('CLIENT_ID'),
 		secret: envParseString('OAUTH_SECRET'),
 		cookie: envParseString('OAUTH_COOKIE'),
 		redirect: envParseString('OAUTH_REDIRECT_URI'),
-		scopes: envParseArray('OAUTH_SCOPE'),
+		scopes: envParseArray('OAUTH_SCOPE') as OAuth2Scopes[],
 		transformers: [transformOauthGuildsAndUser],
 		domainOverwrite: envParseString('OAUTH_DOMAIN_OVERWRITE')
 	};
@@ -112,7 +76,7 @@ function parsePresenceActivity(): ActivitiesOptions[] {
 	return [
 		{
 			name: CLIENT_PRESENCE_NAME,
-			type: envParseString('CLIENT_PRESENCE_TYPE', 'LISTENING') as ExcludeEnum<typeof ActivityTypes, 'CUSTOM'>
+			type: ActivityType[envParseString('CLIENT_PRESENCE_TYPE', 'Listening') as keyof typeof ActivityType]
 		}
 	];
 }
@@ -126,10 +90,10 @@ export const PROJECT_ROOT = join(rootFolder, process.env.OVERRIDE_ROOT_PATH ?? '
 export const LANGUAGE_ROOT = join(PROJECT_ROOT, 'languages');
 
 function parseInternationalizationDefaultVariablesPermissions() {
-	const keys = Object.keys(Permissions.FLAGS) as readonly PermissionString[];
+	const keys = Object.keys(PermissionFlagsBits) as readonly (keyof typeof PermissionFlagsBits)[];
 	const entries = keys.map((key) => [key, key] as const);
 
-	return Object.fromEntries(entries) as Readonly<Record<PermissionString, PermissionString>>;
+	return Object.fromEntries(entries) as Readonly<Record<keyof typeof PermissionFlagsBits, keyof typeof PermissionFlagsBits>>;
 }
 
 function parseInternationalizationDefaultVariables() {
@@ -137,7 +101,6 @@ function parseInternationalizationDefaultVariables() {
 		TRIVIA_CATEGORIES: Object.keys(TRIVIA_CATEGORIES ?? {}).join(', '),
 		VERSION: process.env.CLIENT_VERSION,
 		LOADING: Emojis.Loading,
-		SHINY: Emojis.Shiny,
 		GREENTICK: Emojis.GreenTick,
 		REDCROSS: Emojis.RedCross,
 		DEFAULT_PREFIX: process.env.CLIENT_PREFIX,
@@ -147,79 +110,68 @@ function parseInternationalizationDefaultVariables() {
 }
 
 function parseInternationalizationInterpolation(): InterpolationOptions {
-	return {
-		escapeValue: false,
-		defaultVariables: parseInternationalizationDefaultVariables(),
-		format: (...[value, format, language, options]: Parameters<FormatFunction>) => {
-			switch (format as LanguageFormatters) {
-				case LanguageFormatters.AndList: {
-					return getHandler(language!).listAnd.format(value as string[]);
-				}
-				case LanguageFormatters.OrList: {
-					return getHandler(language!).listOr.format(value as string[]);
-				}
-				case LanguageFormatters.Permissions: {
-					return i18next.t(`permissions:${value}`, { ...options, lng: language });
-				}
-				case LanguageFormatters.PermissionsAndList: {
-					return getHandler(language!).listAnd.format(
-						(value as string[]).map((value) => i18next.t(`permissions:${value}`, { ...options, lng: language }))
-					);
-				}
-				case LanguageFormatters.HumanLevels: {
-					return i18next.t(`humanLevels:${value}`, { ...options, lng: language });
-				}
-				case LanguageFormatters.ToTitleCase: {
-					return toTitleCase(value);
-				}
-				case LanguageFormatters.ExplicitContentFilter: {
-					switch (value as ExplicitContentFilterLevel) {
-						case 'DISABLED':
-							return i18next.t(LanguageKeys.Guilds.ExplicitContentFilterDisabled, { ...options, lng: language });
-						case 'MEMBERS_WITHOUT_ROLES':
-							return i18next.t(LanguageKeys.Guilds.ExplicitContentFilterMembersWithoutRoles, { ...options, lng: language });
-						case 'ALL_MEMBERS':
-							return i18next.t(LanguageKeys.Guilds.ExplicitContentFilterAllMembers, { ...options, lng: language });
-						default:
-							return i18next.t(LanguageKeys.Globals.Unknown, { ...options, lng: language });
-					}
-				}
-				case LanguageFormatters.MessageNotifications: {
-					switch (value as DefaultMessageNotificationLevel) {
-						case 'ALL_MESSAGES':
-							return i18next.t(LanguageKeys.Guilds.MessageNotificationsAll, { ...options, lng: language });
-						case 'ONLY_MENTIONS':
-							return i18next.t(LanguageKeys.Guilds.MessageNotificationsMentions, { ...options, lng: language });
-						default:
-							return i18next.t(LanguageKeys.Globals.Unknown, { ...options, lng: language });
-					}
-				}
-				case LanguageFormatters.CodeBlock: {
-					return codeBlock('', value);
-				}
-				case LanguageFormatters.JsCodeBlock: {
-					return codeBlock('js', value);
-				}
-				case LanguageFormatters.Number: {
-					return getHandler(language!).number.format(value as number);
-				}
-				case LanguageFormatters.NumberCompact: {
-					return getHandler(language!).numberCompact.format(value as number);
-				}
-				case LanguageFormatters.Ordinal: {
-					return getHandler(language!).ordinal(value as number);
-				}
-				case LanguageFormatters.Duration: {
-					return getHandler(language!).duration.format(value as number, options?.precision ?? 2);
-				}
-				case LanguageFormatters.DateTime: {
-					return getHandler(language!).dateTime.format(value as number);
-				}
-				default:
-					return value as string;
-			}
+	return { escapeValue: false, defaultVariables: parseInternationalizationDefaultVariables() };
+}
+
+function parseInternationalizationFormatters(): I18nextFormatter[] {
+	const { t } = i18next;
+
+	return [
+		// Add custom formatters:
+		{
+			name: LanguageFormatters.Number,
+			format: (lng, options) => {
+				const formatter = new Intl.NumberFormat(lng, { maximumFractionDigits: 2, ...options });
+				return (value) => formatter.format(value);
+			},
+			cached: true
+		},
+		{
+			name: LanguageFormatters.NumberCompact,
+			format: (lng, options) => {
+				const formatter = new Intl.NumberFormat(lng, { notation: 'compact', compactDisplay: 'short', maximumFractionDigits: 2, ...options });
+				return (value) => formatter.format(value);
+			},
+			cached: true
+		},
+		{
+			name: LanguageFormatters.Duration,
+			format: (lng, options) => {
+				const formatter = getHandler((lng ?? 'en-US') as LocaleString).duration;
+				const precision = (options?.precision as number) ?? 2;
+				return (value) => formatter.format(value, precision);
+			},
+			cached: true
+		},
+		{
+			name: LanguageFormatters.HumanDateTime,
+			format: (lng, options) => {
+				const formatter = new Intl.DateTimeFormat(lng, { timeZone: 'Etc/UTC', dateStyle: 'short', timeStyle: 'medium', ...options });
+				return (value) => formatter.format(value);
+			},
+			cached: true
+		},
+		// Add Discord markdown formatters:
+		{ name: LanguageFormatters.DateTime, format: (value) => time(new Date(value), TimestampStyles.ShortDateTime) },
+		// Add alias formatters:
+		{
+			name: LanguageFormatters.Permissions,
+			format: (value, lng, options) => t(`permissions:${value}`, { lng, ...options }) as string
+		},
+		{
+			name: LanguageFormatters.HumanLevels,
+			format: (value, lng, options) => t(`humanLevels:${GuildVerificationLevel[value]}`, { lng, ...options }) as string
+		},
+		{
+			name: LanguageFormatters.ExplicitContentFilter,
+			format: (value, lng, options) => t(`guilds:explicitContentFilter${GuildExplicitContentFilter[value]}`, { lng, ...options }) as string
+		},
+		{
+			name: LanguageFormatters.MessageNotifications,
+			format: (value, lng, options) =>
+				t(`guilds:defaultMessageNotifications${GuildDefaultMessageNotifications[value]}`, { lng, ...options }) as string
 		}
-	};
+	];
 }
 
 function parseInternationalizationOptions(): InternationalizationOptions {
@@ -227,11 +179,11 @@ function parseInternationalizationOptions(): InternationalizationOptions {
 		defaultMissingKey: 'default',
 		defaultNS: 'globals',
 		defaultLanguageDirectory: LANGUAGE_ROOT,
-		fetchLanguage: ({ guild }) => {
+		fetchLanguage: async ({ guild }) => {
 			if (!guild) return 'en-US';
-
-			return readSettings(guild, GuildSettings.Language);
+			return (await readSettings(guild)).language;
 		},
+		formatters: parseInternationalizationFormatters(),
 		i18next: (_: string[], languages: string[]) => ({
 			supportedLngs: languages,
 			preload: languages,
@@ -240,7 +192,10 @@ function parseInternationalizationOptions(): InternationalizationOptions {
 			returnNull: false,
 			load: 'all',
 			lng: 'en-US',
-			fallbackLng: 'en-US',
+			fallbackLng: {
+				'es-419': ['es-ES', 'en-US'], // Latin America Spanish falls back to Spain Spanish
+				default: ['en-US']
+			},
 			defaultNS: 'globals',
 			overloadTranslationOptionHandler: (args) => ({ defaultValue: args[1] ?? 'globals:default' }),
 			initImmediate: false,
@@ -250,39 +205,37 @@ function parseInternationalizationOptions(): InternationalizationOptions {
 }
 
 export const CLIENT_OPTIONS: ClientOptions = {
-	audio: parseAudio(),
 	allowedMentions: { users: [], roles: [] },
 	api: parseApi(),
 	caseInsensitiveCommands: true,
 	caseInsensitivePrefixes: true,
 	defaultPrefix: envParseString('CLIENT_PREFIX'),
 	intents: [
-		'GUILDS',
-		'GUILD_MEMBERS',
-		'GUILD_BANS',
-		'GUILD_EMOJIS_AND_STICKERS',
-		'GUILD_VOICE_STATES',
-		'GUILD_MESSAGES',
-		'GUILD_MESSAGE_REACTIONS',
-		'DIRECT_MESSAGES',
-		'DIRECT_MESSAGE_REACTIONS'
+		GatewayIntentBits.Guilds,
+		GatewayIntentBits.GuildMembers,
+		GatewayIntentBits.GuildModeration,
+		GatewayIntentBits.GuildEmojisAndStickers,
+		GatewayIntentBits.GuildVoiceStates,
+		GatewayIntentBits.GuildMessages,
+		GatewayIntentBits.GuildMessageReactions,
+		GatewayIntentBits.DirectMessages,
+		GatewayIntentBits.DirectMessageReactions,
+		GatewayIntentBits.MessageContent
 	],
 	loadDefaultErrorListeners: false,
-	makeCache: Options.cacheWithLimits({
-		...Options.defaultMakeCacheSettings,
-		MessageManager: {
-			sweepInterval: 180,
-			sweepFilter: LimitedCollection.filterByLifetime({
-				lifetime: 900,
-				getComparisonTimestamp: (m) => m.editedTimestamp ?? m.createdTimestamp
-			})
+	loadMessageCommandListeners: true,
+	makeCache: Options.cacheEverything(),
+	sweepers: {
+		...Options.DefaultSweeperSettings,
+		messages: {
+			interval: minutes.toSeconds(3),
+			lifetime: minutes.toSeconds(15)
 		}
-	}),
-	partials: ['CHANNEL'],
+	},
+	partials: [Partials.Channel],
 	presence: { activities: parsePresenceActivity() },
 	regexPrefix: parseRegExpPrefix(),
-	restTimeOffset: 0,
-	schedule: { interval: 5000 },
+	schedule: { interval: seconds(5) },
 	nms: {
 		everyone: 5,
 		role: 2

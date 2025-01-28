@@ -1,2 +1,1 @@
-export * from './GuildMemberFetchQueue';
-export * from './SkyraEmbed';
+export * from '#lib/discord/GuildMemberFetchQueue';

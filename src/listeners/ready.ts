@@ -1,32 +1,18 @@
-import { envParseBoolean } from '#lib/env';
-import { Slotmachine } from '#lib/games/Slotmachine';
-import { WheelOfFortune } from '#lib/games/WheelOfFortune';
-import { Events, Schedules } from '#lib/types/Enums';
+import { Events, Schedules } from '#lib/types';
 import { ApplyOptions } from '@sapphire/decorators';
-import { Listener, ListenerOptions, Piece, Store } from '@sapphire/framework';
+import { Listener, Piece, Store } from '@sapphire/framework';
 import type { TFunction } from '@sapphire/plugin-i18next';
 import { isNullish } from '@sapphire/utilities';
+import { envParseBoolean } from '@skyra/env-utilities';
 import { blue, gray, green, magenta, magentaBright, red, white, yellow } from 'colorette';
 
-@ApplyOptions<ListenerOptions>({ once: true })
+@ApplyOptions<Listener.Options>({ once: true })
 export class UserListener extends Listener {
 	private readonly style = this.container.client.dev ? yellow : blue;
 
 	public async run() {
-		const { client } = this.container;
 		try {
-			await Promise.all([
-				// Initialize Slotmachine data
-				Slotmachine.init().catch((error) => this.container.logger.fatal(error)),
-				// Initialize WheelOfFortune data
-				WheelOfFortune.init().catch((error) => this.container.logger.fatal(error)),
-				// Initialize giveaways
-				client.giveaways.init().catch((error) => this.container.logger.fatal(error)),
-				this.connectAfk(),
-				// Connect Lavalink if configured to do so
-				this.connectLavalink(),
-				this.initAnalytics()
-			]);
+			await this.initAnalytics();
 
 			// Setup the stat updating task
 			await this.initPostStatsTask().catch((error) => this.container.logger.fatal(error));
@@ -42,14 +28,14 @@ export class UserListener extends Listener {
 	private async initPostStatsTask() {
 		const { queue } = this.container.schedule;
 		if (!queue.some((task) => task.taskId === Schedules.Poststats)) {
-			await this.container.schedule.add(Schedules.Poststats, '*/10 * * * *', {});
+			await this.container.schedule.add(Schedules.Poststats, '*/10 * * * *', { data: null });
 		}
 	}
 
 	private async initSyncResourceAnalyticsTask() {
 		const { queue } = this.container.schedule;
 		if (!queue.some((task) => task.taskId === Schedules.SyncResourceAnalytics)) {
-			await this.container.schedule.add(Schedules.SyncResourceAnalytics, '*/1 * * * *');
+			await this.container.schedule.add(Schedules.SyncResourceAnalytics, '*/1 * * * *', { data: null });
 		}
 	}
 
@@ -64,17 +50,6 @@ export class UserListener extends Listener {
 
 			await this.initSyncResourceAnalyticsTask().catch((error) => this.container.logger.fatal(error));
 		}
-	}
-
-	private async connectLavalink() {
-		if (envParseBoolean('AUDIO_ENABLED')) {
-			await this.container.client.audio!.connect();
-			await this.container.client.audio!.queues.start();
-		}
-	}
-
-	private async connectAfk() {
-		if (!isNullish(this.container.afk)) await this.container.afk.connect();
 	}
 
 	private printBanner() {
@@ -98,9 +73,12 @@ export class UserListener extends Listener {
 		const line12 = llc(String.raw`              ╢${blc('▓▓/')}   `);
 		const line13 = llc(String.raw`             ▓${blc('╬/')}     `);
 		const line14 = llc(String.raw`            /        `);
+		const line15 = llc(String.raw`                     `);
 
 		// Offset Pad
 		const pad = ' '.repeat(7);
+
+		const isAuthEnabled = !isNullish(client.options.api?.auth);
 
 		console.log(
 			String.raw`
@@ -114,10 +92,11 @@ ${line07} (_______/  (__|  \__)|___/    |__|  \___)(___/    \___)
 ${line08} ${blc(process.env.CLIENT_VERSION.padStart(55, ' '))}
 ${line09} ${pad}[${success}] Gateway
 ${line10} ${pad}[${client.analytics ? success : failed}] Analytics
-${line11} ${pad}[${client.audio?.queues?.client.connected ? success : failed}] Audio
+${line11} ${pad}[${isAuthEnabled ? success : failed}] OAuth 2.0 Enabled
 ${line12} ${pad}[${success}] Moderation
-${line13} ${pad}[${success}] Social & Leaderboards
-${line14}${client.dev ? ` ${pad}${blc('<')}${llc('/')}${blc('>')} ${llc('DEVELOPMENT MODE')}` : ''}
+${line13}
+${line14}
+${line15}${client.dev ? ` ${pad}${blc('<')}${llc('/')}${blc('>')} ${llc('DEVELOPMENT MODE')}` : ''}
 		`.trim()
 		);
 	}
@@ -134,10 +113,10 @@ ${line14}${client.dev ? ` ${pad}${blc('<')}${llc('/')}${blc('>')} ${llc('DEVELOP
 	}
 
 	private styleStore(store: Store<Piece>) {
-		return gray(`├─ Loaded ${this.style(store.size.toString().padEnd(3, ' '))} ${store.name}.`);
+		return gray(`├─ Loaded ${this.style(store.size.toString().padEnd(2, ' '))} ${store.name}.`);
 	}
 
 	private styleLanguages(languages: Map<string, TFunction>) {
-		return gray(`└─ Loaded ${this.style(languages.size.toString().padEnd(3, ' '))} languages.`);
+		return gray(`└─ Loaded ${this.style(languages.size.toString().padEnd(2, ' '))} languages.`);
 	}
 }

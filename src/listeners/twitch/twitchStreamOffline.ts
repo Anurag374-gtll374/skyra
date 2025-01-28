@@ -1,40 +1,36 @@
 import { LanguageKeys } from '#lib/i18n/languageKeys';
-import { TwitchEventSubEvent, TwitchEventSubTypes } from '#lib/types';
-import { Events } from '#lib/types/Enums';
+import { Events } from '#lib/types';
 import { floatPromise } from '#utils/common';
+import { streamNotificationDrip } from '#utils/twitch';
 import { extractDetailedMentions } from '#utils/util';
-import { time, TimestampStyles } from '@discordjs/builders';
+import { TimestampStyles, time } from '@discordjs/builders';
 import { ApplyOptions } from '@sapphire/decorators';
-import { canSendMessages, TextBasedChannelTypes } from '@sapphire/discord.js-utilities';
-import { Listener, ListenerOptions } from '@sapphire/framework';
+import { canSendMessages, type GuildTextBasedChannelTypes } from '@sapphire/discord.js-utilities';
+import { Listener } from '@sapphire/framework';
+import type { TFunction } from '@sapphire/plugin-i18next';
 import { fetchT } from '@sapphire/plugin-i18next';
 import { isNullish, isNullishOrEmpty } from '@sapphire/utilities';
-import type { TFunction } from 'i18next';
+import { TwitchEventSubTypes, type TwitchEventSubEvent } from '@skyra/twitch-helpers';
 
-@ApplyOptions<ListenerOptions>({
+@ApplyOptions<Listener.Options>({
 	event: Events.TwitchStreamOffline
 })
 export class UserListener extends Listener<Events.TwitchStreamOffline> {
 	public async run(data: TwitchEventSubEvent) {
-		const { twitchSubscriptions } = this.container.db;
 		const date = new Date();
 
-		const twitchSubscription = await twitchSubscriptions.findOne({
-			relations: ['guildSubscription'],
+		const twitchSubscription = await this.container.prisma.twitchSubscription.findFirst({
 			where: {
 				streamerId: data.broadcaster_user_id,
-				subscriptionType: TwitchEventSubTypes.StreamOffline
-			}
+				subscriptionType: 'StreamOffline'
+			},
+			include: { guildSubscription: true }
 		});
 
 		if (twitchSubscription) {
 			// Iterate over all the guilds that are subscribed to this streamer and subscription type
 			for (const guildSubscription of twitchSubscription.guildSubscription) {
-				if (
-					this.container.client.twitch.streamNotificationDrip(
-						`${twitchSubscription.streamerId}-${guildSubscription.channelId}-${TwitchEventSubTypes.StreamOffline}`
-					)
-				) {
+				if (streamNotificationDrip(`${twitchSubscription.streamerId}-${guildSubscription.channelId}-${TwitchEventSubTypes.StreamOffline}`)) {
 					continue;
 				}
 
@@ -46,7 +42,7 @@ export class UserListener extends Listener<Events.TwitchStreamOffline> {
 				const t = await fetchT(guild);
 
 				// Retrieve the channel to send the message to
-				const channel = guild.channels.cache.get(guildSubscription.channelId) as TextBasedChannelTypes;
+				const channel = guild.channels.cache.get(guildSubscription.channelId) as GuildTextBasedChannelTypes;
 				if (isNullish(channel) || !canSendMessages(channel)) {
 					continue;
 				}
@@ -58,7 +54,7 @@ export class UserListener extends Listener<Events.TwitchStreamOffline> {
 					floatPromise(
 						channel.send({
 							content: this.buildMessage(guildSubscription.message, date, t),
-							allowedMentions: { users: [...detailedMentions.users], roles: [...detailedMentions.roles] }
+							allowedMentions: { parse: detailedMentions.parse, users: [...detailedMentions.users], roles: [...detailedMentions.roles] }
 						})
 					);
 				}

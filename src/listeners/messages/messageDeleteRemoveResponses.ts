@@ -1,14 +1,13 @@
-import { CommandMatcher, GuildSettings, readSettings } from '#lib/database';
-import type { GuildMessage } from '#lib/types';
-import { Events } from '#lib/types/Enums';
+import { CommandMatcher, readSettings } from '#lib/database';
+import { Events, type GuildMessage } from '#lib/types';
 import { deleteMessage, getCommand } from '#utils/functions';
 import { ApplyOptions } from '@sapphire/decorators';
-import { Listener, ListenerOptions } from '@sapphire/framework';
+import { Listener } from '@sapphire/framework';
 import { get } from '@sapphire/plugin-editable-commands';
 import { hasAtLeastOneKeyInMap } from '@sapphire/utilities';
 import type { Message } from 'discord.js';
 
-@ApplyOptions<ListenerOptions>({ event: Events.MessageDelete })
+@ApplyOptions<Listener.Options>({ event: Events.MessageDelete })
 export class UserListener extends Listener {
 	public async run(message: Message) {
 		const response = get(message);
@@ -30,25 +29,20 @@ export class UserListener extends Listener {
 	private async shouldBeIgnored(message: Message): Promise<boolean> {
 		if (!this.canBeCustomized(message)) return false;
 
-		const [ignoredAll, ignoredChannels, ignoredCommands, ignoredRoles] = await readSettings(message.guild, [
-			GuildSettings.Messages.AutoDelete.IgnoredAll,
-			GuildSettings.Messages.AutoDelete.IgnoredChannels,
-			GuildSettings.Messages.AutoDelete.IgnoredCommands,
-			GuildSettings.Messages.AutoDelete.IgnoredRoles
-		]);
+		const settings = await readSettings(message.guild);
 
 		// Check for ignored all:
-		if (ignoredAll) return true;
+		if (settings.messagesAutoDeleteIgnoredAll) return true;
 
 		// Check for ignored channels:
-		if (ignoredChannels.includes(message.channel.id)) return true;
+		if (settings.messagesAutoDeleteIgnoredChannels.includes(message.channel.id)) return true;
 
 		// Check for ignored roles:
-		if (hasAtLeastOneKeyInMap(message.member.roles.cache, ignoredRoles)) return true;
+		if (hasAtLeastOneKeyInMap(message.member.roles.cache, settings.messagesAutoDeleteIgnoredRoles)) return true;
 
 		// Check for ignored commands:
 		const command = getCommand(message);
-		if (command !== null && CommandMatcher.matchAny(ignoredCommands, command)) return true;
+		if (command !== null && CommandMatcher.matchAny(settings.messagesAutoDeleteIgnoredCommands, command)) return true;
 
 		return false;
 	}

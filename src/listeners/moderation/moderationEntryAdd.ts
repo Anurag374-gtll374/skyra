@@ -1,44 +1,52 @@
-import { GuildSettings, ModerationEntity, writeSettings } from '#lib/database';
+import { writeSettings } from '#lib/database';
+import type { ModerationManager } from '#lib/moderation';
+import { getEmbed, getUndoTaskName } from '#lib/moderation/common';
 import { resolveOnErrorCodes } from '#utils/common';
-import { SchemaKeys } from '#utils/moderationConstants';
+import { getModeration } from '#utils/functions';
 import { canSendEmbeds } from '@sapphire/discord.js-utilities';
 import { Listener } from '@sapphire/framework';
-import { RESTJSONErrorCodes } from 'discord-api-types/v9';
+import { fetchT } from '@sapphire/plugin-i18next';
+import { isNullishOrZero } from '@sapphire/utilities';
+import { RESTJSONErrorCodes } from 'discord.js';
 
 export class UserListener extends Listener {
-	public run(entry: ModerationEntity) {
+	public run(entry: ModerationManager.Entry) {
 		return Promise.all([this.sendMessage(entry), this.scheduleDuration(entry)]);
 	}
 
-	private async sendMessage(entry: ModerationEntity) {
-		const channel = await entry.fetchChannel();
+	private async sendMessage(entry: ModerationManager.Entry) {
+		const moderation = getModeration(entry.guild);
+		const channel = await moderation.fetchChannel();
 		if (channel === null || !canSendEmbeds(channel)) return;
 
-		const messageEmbed = await entry.prepareEmbed();
-
-		const options = { embeds: [messageEmbed] };
+		const t = await fetchT(entry.guild);
+		const options = { embeds: [await getEmbed(t, entry)] };
 		try {
 			await resolveOnErrorCodes(channel.send(options), RESTJSONErrorCodes.MissingAccess, RESTJSONErrorCodes.MissingPermissions);
 		} catch (error) {
-			await writeSettings(entry.guild, [[GuildSettings.Channels.Logs.Moderation, null]]);
+			await writeSettings(entry.guild, { channelsLogsModeration: null });
 		}
 	}
 
-	private async scheduleDuration(entry: ModerationEntity) {
-		const taskName = entry.duration === null ? null : entry.appealTaskName;
-		if (taskName !== null) {
-			await this.container.schedule
-				.add(taskName, entry.duration! + Date.now(), {
-					catchUp: true,
-					data: {
-						[SchemaKeys.Case]: entry.caseId,
-						[SchemaKeys.User]: entry.userId,
-						[SchemaKeys.Guild]: entry.guildId,
-						[SchemaKeys.Duration]: entry.duration,
-						[SchemaKeys.ExtraData]: entry.extraData
-					}
-				})
-				.catch((error) => this.container.logger.fatal(error));
-		}
+	private async scheduleDuration(entry: ModerationManager.Entry) {
+		if (isNullishOrZero(entry.duration)) return;
+
+		const taskName = getUndoTaskName(entry.type);
+		if (taskName === null) return;
+
+		await this.container.schedule
+			.add(taskName, entry.expiresTimestamp!, {
+				catchUp: true,
+				data: {
+					caseID: entry.id,
+					userID: entry.userId,
+					guildID: entry.guild.id,
+					// @ts-expect-error complex types
+					type: entry.type,
+					duration: entry.duration,
+					extraData: entry.extraData
+				}
+			})
+			.catch((error) => this.container.logger.fatal(error));
 	}
 }
