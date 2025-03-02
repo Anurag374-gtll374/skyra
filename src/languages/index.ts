@@ -1,20 +1,19 @@
 import type { Handler } from '#lib/i18n/structures/Handler';
-import { ExtendedHandler as DeDeHandler } from './de-DE/constants';
-import { ExtendedHandler as EnGbHandler } from './en-GB/constants';
-import { ExtendedHandler as EnUsHandler } from './en-US/constants';
-import { ExtendedHandler as EsEsHandler } from './es-ES/constants';
-import { ExtendedHandler as NbNoHandler } from './nb-NO/constants';
-import { ExtendedHandler as NlNlHandler } from './nl-NL/constants';
+import { ExtendedHandler as DeHandler } from '#root/languages/de/constants';
+import { ExtendedHandler as EnGbHandler } from '#root/languages/en-GB/constants';
+import { ExtendedHandler as EnUsHandler } from '#root/languages/en-US/constants';
+import { ExtendedHandler as EsEsHandler } from '#root/languages/es-ES/constants';
+import { ExtendedHandler as NlHandler } from '#root/languages/nl/constants';
+import { Locale } from 'discord.js';
 
-export const handlers = new Map<string, Handler>([
-	['de-DE', new DeDeHandler()],
-	['en-US', new EnUsHandler()],
-	['en-GB', new EnGbHandler()],
-	['es-ES', new EsEsHandler()],
-	['nb-NO', new NbNoHandler()],
-	['nl-NL', new NlNlHandler()]
+export const handlers = new Map<Locale, Handler>([
+	[Locale.German, new DeHandler()],
+	[Locale.EnglishUS, new EnUsHandler()],
+	[Locale.EnglishGB, new EnGbHandler()],
+	[Locale.SpanishES, new EsEsHandler()],
+	[Locale.Dutch, new NlHandler()]
 ]);
 
-export function getHandler(name: string): Handler {
-	return handlers.get(name) ?? handlers.get('en-US')!;
+export function getHandler(name: Locale): Handler {
+	return handlers.get(name) ?? handlers.get(Locale.EnglishUS)!;
 }

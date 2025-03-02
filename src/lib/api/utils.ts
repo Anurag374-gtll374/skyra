@@ -1,18 +1,29 @@
-import * as GuildSettings from '#lib/database/keys/settings/All';
-import { readSettings } from '#lib/database/settings';
+import { flattenGuild } from '#lib/api/ApiTransformers';
+import type { OauthFlattenedGuild, PartialOauthFlattenedGuild, TransformedLoginData } from '#lib/api/types';
+import { readSettings, readSettingsPermissionNodes } from '#lib/database/settings';
 import type { SkyraCommand } from '#lib/structures';
+import { PermissionsBits } from '#lib/util/bits';
 import { createFunctionPrecondition } from '@sapphire/decorators';
 import { container } from '@sapphire/framework';
-import { ApiRequest, ApiResponse, HttpCodes, LoginData } from '@sapphire/plugin-api';
+import { ApiRequest, ApiResponse, HttpCodes, type LoginData } from '@sapphire/plugin-api';
 import { RateLimitManager } from '@sapphire/ratelimits';
 import { hasAtLeastOneKeyInMap } from '@sapphire/utilities';
-import type { RESTAPIPartialCurrentUserGuild } from 'discord-api-types/v9';
-import { Client, Guild, GuildMember, Permissions } from 'discord.js';
-import { flattenGuild } from './ApiTransformers';
-import type { OauthFlattenedGuild, PartialOauthFlattenedGuild, TransformedLoginData } from './types';
+import {
+	GuildDefaultMessageNotifications,
+	GuildExplicitContentFilter,
+	GuildMFALevel,
+	GuildPremiumTier,
+	GuildVerificationLevel,
+	Locale,
+	PermissionFlagsBits,
+	type Client,
+	type Guild,
+	type GuildMember,
+	type RESTAPIPartialCurrentUserGuild
+} from 'discord.js';
 
 function isAdmin(member: GuildMember, roles: readonly string[]): boolean {
-	return roles.length === 0 ? member.permissions.has(Permissions.FLAGS.MANAGE_GUILD) : hasAtLeastOneKeyInMap(member.roles.cache, roles);
+	return roles.length === 0 ? member.permissions.has(PermissionFlagsBits.ManageGuild) : hasAtLeastOneKeyInMap(member.roles.cache, roles);
 }
 
 export const authenticated = () =>
@@ -31,7 +42,7 @@ export function ratelimit(time: number, limit = 1, auth = false) {
 	const xRateLimitLimit = time;
 	return createFunctionPrecondition(
 		(request: ApiRequest, response: ApiResponse) => {
-			const id = (auth ? request.auth!.id : request.headers['x-forwarded-for'] || request.connection.remoteAddress) as string;
+			const id = (auth ? request.auth!.id : request.headers['x-forwarded-for'] || request.socket.remoteAddress) as string;
 			const bucket = manager.acquire(id);
 
 			response.setHeader('Date', new Date().toUTCString());
@@ -59,14 +70,14 @@ export function ratelimit(time: number, limit = 1, auth = false) {
 export async function canManage(guild: Guild, member: GuildMember): Promise<boolean> {
 	if (guild.ownerId === member.id) return true;
 
-	const [roles, pnodes] = await readSettings(guild, (settings) => [settings[GuildSettings.Roles.Admin], settings.permissionNodes]);
-
-	return isAdmin(member, roles) && (pnodes.run(member, container.stores.get('commands').get('conf') as SkyraCommand) ?? true);
+	const settings = await readSettings(guild);
+	const nodes = readSettingsPermissionNodes(settings);
+	return isAdmin(member, settings.rolesAdmin) && (nodes.run(member, container.stores.get('commands').get('conf') as SkyraCommand) ?? true);
 }
 
-export async function getManageable(id: string, oauthGuild: RESTAPIPartialCurrentUserGuild, guild: Guild | undefined): Promise<boolean> {
+async function getManageable(id: string, oauthGuild: RESTAPIPartialCurrentUserGuild, guild: Guild | undefined): Promise<boolean> {
 	if (oauthGuild.owner) return true;
-	if (typeof guild === 'undefined') return new Permissions(BigInt(oauthGuild.permissions)).has(Permissions.FLAGS.MANAGE_GUILD);
+	if (typeof guild === 'undefined') return PermissionsBits.has(BigInt(oauthGuild.permissions), PermissionFlagsBits.ManageGuild);
 
 	const member = await guild.members.fetch(id).catch(() => null);
 	if (!member) return false;
@@ -74,7 +85,7 @@ export async function getManageable(id: string, oauthGuild: RESTAPIPartialCurren
 	return canManage(guild, member);
 }
 
-export async function transformGuild(client: Client, userId: string, data: RESTAPIPartialCurrentUserGuild): Promise<OauthFlattenedGuild> {
+async function transformGuild(client: Client, userId: string, data: RESTAPIPartialCurrentUserGuild): Promise<OauthFlattenedGuild> {
 	const guild = client.guilds.cache.get(data.id);
 	const serialized: PartialOauthFlattenedGuild =
 		typeof guild === 'undefined'
@@ -87,27 +98,27 @@ export async function transformGuild(client: Client, userId: string, data: RESTA
 					available: true,
 					banner: null,
 					channels: [],
-					defaultMessageNotifications: 'ONLY_MENTIONS',
+					defaultMessageNotifications: GuildDefaultMessageNotifications.OnlyMentions,
 					description: null,
 					widgetEnabled: false,
-					explicitContentFilter: 'DISABLED',
+					explicitContentFilter: GuildExplicitContentFilter.Disabled,
 					icon: data.icon,
 					id: data.id,
 					joinedTimestamp: null,
-					mfaLevel: 'NONE',
+					mfaLevel: GuildMFALevel.None,
 					name: data.name,
 					ownerId: data.owner ? userId : null,
 					partnered: false,
-					preferredLocale: 'en-US',
+					preferredLocale: Locale.EnglishUS,
 					premiumSubscriptionCount: null,
-					premiumTier: 'NONE',
+					premiumTier: GuildPremiumTier.None,
 					roles: [],
 					splash: null,
 					systemChannelId: null,
 					vanityURLCode: null,
-					verificationLevel: 'NONE',
+					verificationLevel: GuildVerificationLevel.None,
 					verified: false
-			  }
+				}
 			: flattenGuild(guild);
 
 	return {

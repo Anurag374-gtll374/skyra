@@ -30,9 +30,6 @@ export const WordIncluded = FT<{ name: string; value: string }>('serializers:wor
 export const PermissionNodeSecurityOwner = T('serializers:permissionNodeSecurityOwner');
 export const ReactionRoleInvalid = T('serializers:reactionRoleInvalid');
 export const StickyRoleInvalid = T('serializers:stickyRoleInvalid');
-export const TriggerAliasInvalid = T('serializers:triggerAliasInvalid');
-export const TriggerIncludeInvalid = T('serializers:triggerIncludeInvalid');
-export const TriggerIncludeInvalidAction = T('serializers:triggerIncludeInvalidAction');
 export const TwitchSubscriptionInvalid = T('serializers:twitchSubscriptionInvalid');
 export const TwitchSubscriptionInvalidStreamer = T('serializers:twitchSubscriptionInvalidStreamer');
 export const UniqueRoleSetInvalid = T('serializers:uniqueRoleSetInvalid');
@@ -41,5 +38,4 @@ export const UnknownRole = T('serializers:unknownRole');
 export const UnknownUser = T('serializers:unknownUser');
 export const Unsupported = T('serializers:unsupported');
 
-export * as CustomCommands from './CustomCommandSerializer/All';
-export * as DisabledCommandChannels from './DisabledCommandChannels/All';
+export * as DisabledCommandChannels from '#lib/i18n/languageKeys/keys/DisabledCommandChannels/All';

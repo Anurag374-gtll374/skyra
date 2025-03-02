@@ -1,12 +1,15 @@
-import { GuildSettings, readSettings } from '#lib/database';
+import { readSettings } from '#lib/database';
+import { getT } from '#lib/i18n';
 import { LanguageKeys } from '#lib/i18n/languageKeys';
-import type { CustomGet } from '#lib/types';
-import { Events } from '#lib/types/Enums';
-import { filter, map } from '#utils/common';
+import { Events, type TypedT } from '#lib/types';
 import { Colors } from '#utils/constants';
+import { getFullEmbedAuthor } from '#utils/util';
+import { EmbedBuilder } from '@discordjs/builders';
 import { Listener } from '@sapphire/framework';
-import { Guild, MessageEmbed, User } from 'discord.js';
-import type { TFunction } from 'i18next';
+import { filter } from '@sapphire/iterator-utilities/filter';
+import { map } from '@sapphire/iterator-utilities/map';
+import type { TFunction } from '@sapphire/plugin-i18next';
+import type { Guild, User } from 'discord.js';
 
 export class UserListener extends Listener {
 	public async run(previous: User, user: User) {
@@ -24,17 +27,15 @@ export class UserListener extends Listener {
 	}
 
 	private async processGuild(guild: Guild, user: User, previous: string, next: string) {
-		const [logChannelId, language] = await readSettings(guild, (settings) => [
-			settings[GuildSettings.Channels.Logs.MemberUserNameUpdate],
-			settings.getLanguage()
-		]);
+		const settings = await readSettings(guild);
+		const logChannelId = settings.channelsLogsMemberUsernameUpdate;
+		if (!logChannelId) return;
 
-		if (logChannelId) {
-			// Send the Username log
-			this.container.client.emit(Events.GuildMessageLog, guild, logChannelId, GuildSettings.Channels.Logs.MemberUserNameUpdate, () =>
-				this.buildEmbed(user, language, this.getNameDescription(language, previous, next), LanguageKeys.Events.Guilds.Members.UsernameUpdate)
-			);
-		}
+		// Send the Username log
+		const t = getT(settings.language);
+		this.container.client.emit(Events.GuildMessageLog, guild, logChannelId, 'channelsLogsMemberUsernameUpdate', () =>
+			this.buildEmbed(user, t, this.getNameDescription(t, previous, next), LanguageKeys.Events.Guilds.Members.UsernameUpdate)
+		);
 	}
 
 	private getNameDescription(t: TFunction, previousName: string | null, nextName: string | null) {
@@ -47,12 +48,12 @@ export class UserListener extends Listener {
 		return [t(previous, { previousName }), t(next, { nextName })].join('\n');
 	}
 
-	private buildEmbed(user: User, t: TFunction, description: string, footerKey: CustomGet<string, string>) {
-		return new MessageEmbed()
+	private buildEmbed(user: User, t: TFunction, description: string, footerKey: TypedT<string>) {
+		return new EmbedBuilder()
 			.setColor(Colors.Yellow)
-			.setAuthor(`${user.tag} (${user.id})`, user.displayAvatarURL({ size: 128, format: 'png', dynamic: true }))
+			.setAuthor(getFullEmbedAuthor(user))
 			.setDescription(description)
-			.setFooter(t(footerKey))
+			.setFooter({ text: t(footerKey) })
 			.setTimestamp();
 	}
 }

@@ -1,18 +1,21 @@
-import { GuildSettings, readSettings } from '#lib/database';
+import { readSettings } from '#lib/database';
+import { getT } from '#lib/i18n';
 import { LanguageKeys } from '#lib/i18n/languageKeys';
-import { Events } from '#lib/types/Enums';
+import { Events } from '#lib/types';
 import { Colors } from '#utils/constants';
+import { getFullEmbedAuthor } from '#utils/util';
+import { EmbedBuilder } from '@discordjs/builders';
 import { ApplyOptions } from '@sapphire/decorators';
-import { Listener, ListenerOptions } from '@sapphire/framework';
+import { Listener } from '@sapphire/framework';
+import type { TFunction } from '@sapphire/plugin-i18next';
 import { isNullish } from '@sapphire/utilities';
-import { GuildMember, MessageEmbed } from 'discord.js';
-import type { TFunction } from 'i18next';
+import type { GuildMember } from 'discord.js';
 
-@ApplyOptions<ListenerOptions>({ event: Events.GuildMemberUpdate })
+@ApplyOptions<Listener.Options>({ event: Events.GuildMemberUpdate })
 export class UserListener extends Listener {
 	public async run(previous: GuildMember, next: GuildMember) {
-		const key = GuildSettings.Channels.Logs.MemberRoleUpdate;
-		const [logChannelId, t] = await readSettings(next, (settings) => [settings[key], settings.getLanguage()]);
+		const settings = await readSettings(next);
+		const logChannelId = settings.channelsLogsMemberRolesUpdate;
 		if (isNullish(logChannelId)) return;
 
 		// Retrieve whether or not role logs should be sent from Guild Settings and
@@ -37,12 +40,13 @@ export class UserListener extends Listener {
 		const { user } = next;
 
 		// Set the Role change log
-		this.container.client.emit(Events.GuildMessageLog, next.guild, logChannelId, key, () =>
-			new MessageEmbed()
+		const t = getT(settings.language);
+		this.container.client.emit(Events.GuildMessageLog, next.guild, logChannelId, 'channelsLogsMemberRolesUpdate', () =>
+			new EmbedBuilder()
 				.setColor(Colors.Yellow)
-				.setAuthor(`${user.tag} (${user.id})`, user.displayAvatarURL({ size: 128, format: 'png', dynamic: true }))
+				.setAuthor(getFullEmbedAuthor(user))
 				.setDescription(this.getRoleDescription(t, addedRoles, removedRoles) || t(LanguageKeys.Events.Guilds.Members.GuildMemberNoUpdate))
-				.setFooter(t(LanguageKeys.Events.Guilds.Members.RoleUpdate))
+				.setFooter({ text: t(LanguageKeys.Events.Guilds.Members.RoleUpdate) })
 				.setTimestamp()
 		);
 	}

@@ -1,46 +1,49 @@
 import { LanguageKeys } from '#lib/i18n/languageKeys';
-import { TwitchEventSubTypes } from '#lib/types';
-import type { TwitchEventSubOnlineEvent, TwitchHelixStreamsResult, TwitchOnlineEmbedData } from '#lib/types/definitions/Twitch';
-import { Events } from '#lib/types/Enums';
-import { floatPromise } from '#utils/common';
+import { Events } from '#lib/types';
 import { escapeMarkdown } from '#utils/External/escapeMarkdown';
+import { floatPromise } from '#utils/common';
+import { streamNotificationDrip } from '#utils/twitch';
 import { extractDetailedMentions } from '#utils/util';
+import { EmbedBuilder } from '@discordjs/builders';
 import { ApplyOptions } from '@sapphire/decorators';
-import { canSendMessages, TextBasedChannelTypes } from '@sapphire/discord.js-utilities';
-import { Listener, ListenerOptions } from '@sapphire/framework';
+import { canSendMessages, type GuildTextBasedChannelTypes } from '@sapphire/discord.js-utilities';
+import { Listener } from '@sapphire/framework';
+import type { TFunction } from '@sapphire/plugin-i18next';
 import { fetchT } from '@sapphire/plugin-i18next';
 import { isNullish } from '@sapphire/utilities';
-import { MessageEmbed } from 'discord.js';
-import type { TFunction } from 'i18next';
+import {
+	TwitchBrandingColor,
+	TwitchEventSubTypes,
+	fetchStream,
+	type TwitchEventSubOnlineEvent,
+	type TwitchHelixStreamsResult,
+	type TwitchOnlineEmbedData
+} from '@skyra/twitch-helpers';
 
-@ApplyOptions<ListenerOptions>({
+@ApplyOptions<Listener.Options>({
 	event: Events.TwitchStreamOnline
 })
 export class UserListener extends Listener<Events.TwitchStreamOnline> {
 	private readonly kTwitchImageReplacerRegex = /({width}|{height})/gi;
 
 	public async run(data: TwitchEventSubOnlineEvent) {
-		const { twitchSubscriptions } = this.container.db;
-
-		const twitchSubscription = await twitchSubscriptions.findOne({
-			relations: ['guildSubscription'],
+		const twitchSubscription = await this.container.prisma.twitchSubscription.findFirst({
 			where: {
 				streamerId: data.broadcaster_user_id,
-				subscriptionType: TwitchEventSubTypes.StreamOnline
-			}
+				subscriptionType: 'StreamOnline'
+			},
+			include: { guildSubscription: true }
 		});
 
 		if (twitchSubscription) {
 			try {
 				// Get the data for this stream from the Twitch API
-				const streamData = await this.container.client.twitch.fetchStream(data.broadcaster_user_id);
+				const streamData = await fetchStream(data.broadcaster_user_id);
 
 				// Iterate over all the guilds that are subscribed to this streamer and subscription type
 				for (const guildSubscription of twitchSubscription.guildSubscription) {
 					if (
-						this.container.client.twitch.streamNotificationDrip(
-							`${twitchSubscription.streamerId}-${guildSubscription.channelId}-${TwitchEventSubTypes.StreamOnline}`
-						)
+						streamNotificationDrip(`${twitchSubscription.streamerId}-${guildSubscription.channelId}-${TwitchEventSubTypes.StreamOnline}`)
 					) {
 						continue;
 					}
@@ -53,7 +56,7 @@ export class UserListener extends Listener<Events.TwitchStreamOnline> {
 					const t = await fetchT(guild);
 
 					// Retrieve the channel to send the message to
-					const channel = guild.channels.cache.get(guildSubscription.channelId) as TextBasedChannelTypes;
+					const channel = guild.channels.cache.get(guildSubscription.channelId) as GuildTextBasedChannelTypes;
 					if (isNullish(channel) || !canSendMessages(channel)) {
 						continue;
 					}
@@ -62,9 +65,9 @@ export class UserListener extends Listener<Events.TwitchStreamOnline> {
 					const detailedMentions = extractDetailedMentions(guildSubscription.message);
 					floatPromise(
 						channel.send({
-							content: guildSubscription.message || null,
+							content: guildSubscription.message || undefined,
 							embeds: [this.buildEmbed(this.transformTextToObject(data, streamData), t)],
-							allowedMentions: { users: [...detailedMentions.users], roles: [...detailedMentions.roles] }
+							allowedMentions: { parse: detailedMentions.parse, users: [...detailedMentions.users], roles: [...detailedMentions.roles] }
 						})
 					);
 				}
@@ -88,11 +91,11 @@ export class UserListener extends Listener<Events.TwitchStreamOnline> {
 	}
 
 	private buildEmbed(data: TwitchOnlineEmbedData, t: TFunction) {
-		const embed = new MessageEmbed()
+		const embed = new EmbedBuilder()
 			.setTitle(data.title)
 			.setURL(`https://twitch.tv/${data.userName}`)
-			.setFooter(t(LanguageKeys.Events.Twitch.OfflinePostfix))
-			.setColor(this.container.client.twitch.BRANDING_COLOUR)
+			.setFooter({ text: t(LanguageKeys.Events.Twitch.OfflinePostfix) })
+			.setColor(TwitchBrandingColor)
 			.setTimestamp(data.startedAt);
 
 		if (data.gameName) {

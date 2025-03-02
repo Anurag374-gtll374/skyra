@@ -17,35 +17,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Project
-        uses: actions/checkout@ec3a7ce113134d7a93b817d10a8272cb61118579 # renovate: tag=v2
-        with:
-          submodules: true
+        uses: actions/checkout@v4
       - name: Setup Docker Buildx
-        uses: docker/setup-buildx-action@94ab11c41e45d028884a99163086648e898eed25 # renovate: tag=v1.6.0
-      - name: Login to DockerHub
-        uses: docker/login-action@f054a8b539a109f9f41c372932f1ae047eff08c9 # renovate: tag=v1.10.0
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
+        uses: docker/setup-buildx-action@v3.10.0
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@f054a8b539a109f9f41c372932f1ae047eff08c9 # renovate: tag=v1.10.0
+        uses: docker/login-action@v3.3.0
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and push Skyra Docker image
-        uses: docker/build-push-action@a66e35b9cbcf4ad0ea91ffcaf7bbad63ad9e0229 # renovate: tag=v2.7.0
+        uses: docker/build-push-action@v6.15.0
         with:
           push: true
           context: .
-          tags: |
-            skyrabot/skyra:latest
-            ghcr.io/skyra-project/skyra:latest
-      - name: Update repo description
-        uses: peter-evans/dockerhub-description@616d1b63e806b630b975af3b4fe3304307b20f40 # renovate: tag=v2.4.3
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-          repository: skyrabot/skyra
-          readme-filepath: ./assets/docker-hub/SKYRA.md
-          short-description: Skyra - Multipurpose Discord Bot built on Sapphire Framework
+          tags: ghcr.io/skyra-project/skyra:latest

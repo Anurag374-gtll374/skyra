@@ -10,17 +10,10 @@ import { send } from '@sapphire/plugin-editable-commands';
 	detailedDescription: LanguageKeys.Commands.Moderation.ToggleModerationDmExtended
 })
 export class UserCommand extends SkyraCommand {
-	public async messageRun(message: GuildMessage, args: SkyraCommand.Args) {
-		const { users } = this.container.db;
-		const updated = await users.lock([message.author.id], async (id) => {
-			const user = await users.ensure(id);
-
-			user.moderationDM = !user.moderationDM;
-			return user.save();
-		});
-
+	public override async messageRun(message: GuildMessage, args: SkyraCommand.Args) {
+		const enabled = await this.container.prisma.user.toggleModerationDirectMessageEnabled(message.author.id);
 		const content = args.t(
-			updated.moderationDM
+			enabled
 				? LanguageKeys.Commands.Moderation.ToggleModerationDmToggledEnabled
 				: LanguageKeys.Commands.Moderation.ToggleModerationDmToggledDisabled
 		);

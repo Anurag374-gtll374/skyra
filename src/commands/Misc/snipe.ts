@@ -1,39 +1,70 @@
+import { getSupportedLanguageT } from '#lib/i18n';
 import { LanguageKeys } from '#lib/i18n/languageKeys';
 import { SkyraCommand } from '#lib/structures';
-import type { GuildMessage } from '#lib/types';
-import { PermissionLevels } from '#lib/types/Enums';
+import { PermissionLevels, type GuildMessage } from '#lib/types';
+import { Urls } from '#utils/constants';
 import { getSnipedMessage } from '#utils/functions';
-import { getContent, getImage } from '#utils/util';
+import { getColor, getContent, getFullEmbedAuthor, getImages, setMultipleEmbedImages } from '#utils/util';
+import { EmbedBuilder, chatInputApplicationCommandMention } from '@discordjs/builders';
 import { ApplyOptions } from '@sapphire/decorators';
-import { CommandOptionsRunTypeEnum } from '@sapphire/framework';
+import { ApplicationCommandRegistry, CommandOptionsRunTypeEnum } from '@sapphire/framework';
 import { send } from '@sapphire/plugin-editable-commands';
-import { PermissionFlagsBits } from 'discord-api-types/v9';
-import { MessageEmbed } from 'discord.js';
+import { applyLocalizedBuilder } from '@sapphire/plugin-i18next';
+import { InteractionContextType, MessageFlags, PermissionFlagsBits, type GuildTextBasedChannel } from 'discord.js';
+
+const Root = LanguageKeys.Commands.Snipe;
 
 @ApplyOptions<SkyraCommand.Options>({
 	aliases: ['sniped'],
-	description: LanguageKeys.Commands.Misc.SnipeDescription,
-	detailedDescription: LanguageKeys.Commands.Misc.SnipeExtended,
+	description: Root.Description,
+	detailedDescription: LanguageKeys.Commands.Shared.SlashOnlyDetailedDescription,
 	requiredClientPermissions: [PermissionFlagsBits.EmbedLinks],
 	permissionLevel: PermissionLevels.Moderator,
 	runIn: [CommandOptionsRunTypeEnum.GuildAny]
 })
 export class UserCommand extends SkyraCommand {
-	public async messageRun(message: GuildMessage, args: SkyraCommand.Args) {
-		const sniped = getSnipedMessage(message.channel);
-		if (sniped === null) this.error(LanguageKeys.Commands.Misc.SnipeEmpty);
+	public override registerApplicationCommands(registry: ApplicationCommandRegistry) {
+		registry.registerChatInputCommand(
+			(builder) =>
+				applyLocalizedBuilder(builder, Root.Name, Root.Description)
+					.setContexts(InteractionContextType.Guild)
+					.setDefaultMemberPermissions(PermissionFlagsBits.KickMembers),
+			{
+				idHints: [
+					'1302710787877376082', // skyra production
+					'1302704538351833160' // skyra-beta production
+				]
+			}
+		);
+	}
 
-		const embed = new MessageEmbed()
-			.setTitle(args.t(LanguageKeys.Commands.Misc.SnipeTitle))
-			.setColor(await this.container.db.fetchColor(sniped))
-			.setAuthor(sniped.author.username, sniped.author.displayAvatarURL({ size: 128, format: 'png', dynamic: true }))
+	public override async messageRun(message: GuildMessage, args: SkyraCommand.Args) {
+		const content = args.t(LanguageKeys.Commands.Shared.DeprecatedMessage, {
+			command: chatInputApplicationCommandMention(this.name, this.getGlobalCommandId())
+		});
+
+		return send(message, { content });
+	}
+
+	public override chatInputRun(interaction: SkyraCommand.ChatInputInteraction) {
+		const t = getSupportedLanguageT(interaction);
+		const sniped = getSnipedMessage(interaction.channel as GuildTextBasedChannel);
+		if (sniped === null) {
+			const content = t(Root.MessageEmpty);
+			return interaction.reply({ content, flags: MessageFlags.Ephemeral });
+		}
+
+		const embed = new EmbedBuilder()
+			.setURL(Urls.Website)
+			.setFooter({ text: t(Root.EmbedTitle) })
+			.setColor(getColor(sniped))
+			.setAuthor(getFullEmbedAuthor(sniped.author))
 			.setTimestamp(sniped.createdTimestamp);
 
 		const content = getContent(sniped);
 		if (content !== null) embed.setDescription(content);
-		const image = getImage(sniped);
-		if (image !== null) embed.setImage(image);
 
-		return send(message, { embeds: [embed] });
+		const embeds = setMultipleEmbedImages(embed, getImages(sniped));
+		return interaction.reply({ embeds, flags: MessageFlags.Ephemeral });
 	}
 }

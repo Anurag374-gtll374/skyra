@@ -1,25 +1,13 @@
-import type { GuildEntity } from '#lib/database/entities/GuildEntity';
 import type { SchemaKey } from '#lib/database/settings/schema/SchemaKey';
+import type { ReadonlyGuildData } from '#lib/database/settings/types';
 import { LanguageKeys } from '#lib/i18n/languageKeys';
 import { translate } from '#lib/i18n/translate';
 import type { SkyraArgs } from '#lib/structures';
-import type { O } from '#utils/constants';
-import { AliasPiece, AliasPieceOptions, ArgumentError, UserError } from '@sapphire/framework';
+import { AliasPiece, ArgumentError, UserError } from '@sapphire/framework';
+import type { TFunction } from '@sapphire/plugin-i18next';
+import { Result } from '@sapphire/result';
 import type { Awaitable } from '@sapphire/utilities';
 import type { Guild } from 'discord.js';
-import type { TFunction } from 'i18next';
-
-export interface Ok<T> {
-	success: true;
-	value: T;
-}
-
-export interface Err<E> {
-	success: false;
-	error: E;
-}
-
-export type Result<T, E> = Ok<T> | Err<E>;
 
 export type SerializerResult<T> = Result<T, Error>;
 export type AsyncSerializerResult<T> = Promise<Result<T, Error>>;
@@ -30,13 +18,13 @@ export abstract class Serializer<T> extends AliasPiece {
 	 * @param value The value to parsed.
 	 * @param context The context for the key.
 	 */
-	public abstract parse(args: Serializer.Args, context: SerializerUpdateContext): SerializerResult<T> | AsyncSerializerResult<T>;
+	public abstract parse(args: Serializer.Args, context: Serializer.UpdateContext): SerializerResult<T> | AsyncSerializerResult<T>;
 
 	/**
 	 * Check whether or not the value is valid.
 	 * @param value The value to check.
 	 */
-	public abstract isValid(value: T, context: SerializerUpdateContext): Awaitable<boolean>;
+	public abstract isValid(value: T, context: Serializer.UpdateContext): Awaitable<boolean>;
 
 	/**
 	 * The stringify method to be overwritten in actual Serializers
@@ -44,7 +32,7 @@ export abstract class Serializer<T> extends AliasPiece {
 	 * @param guild The guild given for context in this call
 	 */
 	// eslint-disable-next-line @typescript-eslint/no-unused-vars
-	public stringify(data: T, _context: SerializerUpdateContext): string {
+	public stringify(data: Readonly<T>, _context: Serializer.UpdateContext): string {
 		return String(data);
 	}
 
@@ -60,10 +48,10 @@ export abstract class Serializer<T> extends AliasPiece {
 	/**
 	 * Returns a SerializerResult<T> from a Result<T, UserError>.
 	 * @param args The Args parser.
-	 * @param value The result to handle.
+	 * @param result The result to handle.
 	 */
-	protected result(args: Serializer.Args, value: Result<T, UserError>): SerializerResult<T> {
-		return value.success ? value : this.errorFromArgument(args, value.error);
+	protected result(args: Serializer.Args, result: Result<T, UserError>): SerializerResult<T> {
+		return result.mapErrInto((error) => this.errorFromArgument(args, error));
 	}
 
 	/**
@@ -71,7 +59,7 @@ export abstract class Serializer<T> extends AliasPiece {
 	 * @param value The value to return.
 	 */
 	protected ok<T>(value: T): SerializerResult<T> {
-		return { success: true, value };
+		return Result.ok(value);
 	}
 
 	/**
@@ -79,7 +67,7 @@ export abstract class Serializer<T> extends AliasPiece {
 	 * @param error The message of the error.
 	 */
 	protected error(error: string): SerializerResult<T> {
-		return { success: false, error: new Error(error) };
+		return Result.err(new Error(error));
 	}
 
 	protected errorFromArgument(args: Serializer.Args, error: UserError): SerializerResult<T>;
@@ -92,7 +80,7 @@ export abstract class Serializer<T> extends AliasPiece {
 	protected errorFromArgument<E>(args: Serializer.Args, error: UserError | ArgumentError<E>): SerializerResult<T> {
 		const argument = error instanceof ArgumentError ? error.argument.name : 'Unknown';
 		const identifier = translate(error.identifier);
-		return this.error(args.t(identifier, { ...error, ...(error.context as O), argument }));
+		return this.error(args.t(identifier, { ...error, ...(error.context as object), argument }));
 	}
 
 	/**
@@ -101,7 +89,7 @@ export abstract class Serializer<T> extends AliasPiece {
 	 * @param entry The schema entry that manages the key
 	 * @param language The language that is used for this context
 	 */
-	protected minOrMax(value: T, length: number, { entry: { minimum, maximum, inclusive, name }, t }: SerializerUpdateContext): SerializerResult<T> {
+	protected minOrMax(value: T, length: number, { entry: { minimum, maximum, inclusive, name }, t }: Serializer.UpdateContext): SerializerResult<T> {
 		if (minimum !== null && maximum !== null) {
 			if ((length >= minimum && length <= maximum && inclusive) || (length > minimum && length < maximum && !inclusive)) {
 				return this.ok(value);
@@ -156,13 +144,44 @@ export abstract class Serializer<T> extends AliasPiece {
 }
 
 export namespace Serializer {
-	export type Options = AliasPieceOptions;
+	export type Options = AliasPiece.Options;
 	export type Args = SkyraArgs;
+	export type UpdateContext = SerializerUpdateContext;
+
+	export type Name =
+		| 'boolean'
+		| 'categoryOrTextChannel'
+		| 'guildTextChannel'
+		| 'guildVoiceChannel'
+		| 'guildCategoryChannel'
+		| 'command'
+		| 'commandAutoDelete'
+		| 'commandMatch'
+		| 'disabledCommandChannel'
+		| 'emoji'
+		| 'guild'
+		| 'invite'
+		| 'language'
+		| 'notAllowed'
+		| 'number'
+		| 'integer'
+		| 'float'
+		| 'permissionNode'
+		| 'reactionRole'
+		| 'role'
+		| 'snowflake'
+		| 'stickyRole'
+		| 'string'
+		| 'timespan'
+		| 'uniqueRoleSet'
+		| 'url'
+		| 'user'
+		| 'word';
 }
 
 export interface SerializerUpdateContext {
 	entry: SchemaKey;
-	entity: GuildEntity;
+	entity: ReadonlyGuildData;
 	guild: Guild;
 	t: TFunction;
 }

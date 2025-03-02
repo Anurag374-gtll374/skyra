@@ -1,34 +1,31 @@
-import { GuildSettings, readSettings, writeSettings } from '#lib/database';
+import { readSettings, writeSettings } from '#lib/database';
 import { LanguageKeys } from '#lib/i18n/languageKeys';
-import { PaginatedMessageCommand, SkyraPaginatedMessage } from '#lib/structures';
+import { SkyraCommand } from '#lib/structures';
 import type { GuildMessage } from '#lib/types';
-import { sendLoadingMessage } from '#utils/util';
+import { minutes } from '#utils/common';
+import { getColor, sendLoadingMessage } from '#utils/util';
 import { ApplyOptions } from '@sapphire/decorators';
+import { PaginatedMessage } from '@sapphire/discord.js-utilities';
 import { CommandOptionsRunTypeEnum } from '@sapphire/framework';
 import { send } from '@sapphire/plugin-editable-commands';
+import type { TFunction } from '@sapphire/plugin-i18next';
 import { chunk } from '@sapphire/utilities';
-import { PermissionFlagsBits } from 'discord-api-types/v9';
-import { MessageEmbed, Role } from 'discord.js';
-import type { TFunction } from 'i18next';
+import { EmbedBuilder, PermissionFlagsBits, type Role } from 'discord.js';
 
-@ApplyOptions<PaginatedMessageCommand.Options>({
-	aliases: ['pr', 'role', 'public-roles', 'public-role'],
-	description: LanguageKeys.Commands.Management.RolesDescription,
-	detailedDescription: LanguageKeys.Commands.Management.RolesExtended,
-	requiredClientPermissions: [PermissionFlagsBits.ManageRoles, PermissionFlagsBits.ManageMessages],
-	runIn: [CommandOptionsRunTypeEnum.GuildAny]
-})
-export class UserPaginatedMessageCommand extends PaginatedMessageCommand {
-	public async messageRun(message: GuildMessage, args: PaginatedMessageCommand.Args) {
-		const [rolesPublic, allRoleSets, rolesRemoveInitial, rolesInitial, rolesInitialHumans, rolesInitialBots] = await readSettings(message.guild, [
-			GuildSettings.Roles.Public,
-			GuildSettings.Roles.UniqueRoleSets,
-			GuildSettings.Roles.RemoveInitial,
-			GuildSettings.Roles.Initial,
-			GuildSettings.Roles.InitialHumans,
-			GuildSettings.Roles.InitialBots
-		]);
+@ApplyOptions<SkyraCommand.Options>(
+	SkyraCommand.PaginatedOptions({
+		aliases: ['pr', 'role', 'public-roles', 'public-role'],
+		description: LanguageKeys.Commands.Management.RolesDescription,
+		detailedDescription: LanguageKeys.Commands.Management.RolesExtended,
+		requiredClientPermissions: [PermissionFlagsBits.ManageRoles, PermissionFlagsBits.ManageMessages],
+		runIn: [CommandOptionsRunTypeEnum.GuildAny]
+	})
+)
+export class UserPaginatedMessageCommand extends SkyraCommand {
+	public override async messageRun(message: GuildMessage, args: SkyraCommand.Args) {
+		const settings = await readSettings(message.guild);
 
+		const { rolesPublic } = settings;
 		if (!rolesPublic.length) this.error(LanguageKeys.Commands.Management.RolesListEmpty);
 
 		// If no argument was provided then show the list of available roles
@@ -47,7 +44,7 @@ export class UserPaginatedMessageCommand extends PaginatedMessageCommand {
 		const unmanageable: string[] = [];
 		const addedRoles: string[] = [];
 		const removedRoles: string[] = [];
-		const { position } = message.guild.me!.roles.highest;
+		const { position } = message.guild.members.me!.roles.highest;
 
 		for (const role of filterRoles) {
 			if (!role) continue;
@@ -62,7 +59,7 @@ export class UserPaginatedMessageCommand extends PaginatedMessageCommand {
 				memberRoles.add(role.id);
 				addedRoles.push(role.name);
 
-				for (const set of allRoleSets) {
+				for (const set of settings.rolesUniqueRoleSets) {
 					// If the set does not have the role being added skip to next set
 					if (!set.roles.includes(role.id)) continue;
 
@@ -82,12 +79,12 @@ export class UserPaginatedMessageCommand extends PaginatedMessageCommand {
 			}
 		}
 
-		const actualInitialRole = rolesInitial ?? (message.author.bot ? rolesInitialBots : rolesInitialHumans);
+		const actualInitialRole = settings.rolesInitial ?? (message.author.bot ? settings.rolesInitialBots : settings.rolesInitialHumans);
 		// If the guild requests to remove the initial role upon claiming, remove the initial role
-		if (actualInitialRole && rolesRemoveInitial && addedRoles.length) {
+		if (actualInitialRole && settings.rolesRemoveInitial && addedRoles.length) {
 			// If the role was deleted, remove it from the settings
 			if (!message.guild.roles.cache.has(actualInitialRole)) {
-				await writeSettings(message.guild, [[GuildSettings.Roles.Initial, null]]).catch((error) => this.container.logger.fatal(error));
+				await writeSettings(message.guild, { rolesInitial: null }).catch((error) => this.container.logger.fatal(error));
 			} else if (message.member!.roles.cache.has(actualInitialRole)) {
 				memberRoles.delete(actualInitialRole);
 			}
@@ -122,21 +119,20 @@ export class UserPaginatedMessageCommand extends PaginatedMessageCommand {
 		if (remove.length) {
 			const allRoles = new Set(publicRoles);
 			for (const role of remove) allRoles.delete(role);
-			await writeSettings(message.guild, [[GuildSettings.Roles.Public, [...allRoles]]]);
+			await writeSettings(message.guild, { rolesPublic: [...allRoles] });
 		}
 
 		// There's the possibility all roles could be inexistent, therefore the system
 		// would filter and remove them all, causing this to be empty.
 		if (!roles.length) this.error(LanguageKeys.Commands.Management.RolesListEmpty);
 
-		const user = this.container.client.user!;
-		const display = new SkyraPaginatedMessage({
-			template: new MessageEmbed()
-				.setColor(await this.container.db.fetchColor(message))
-				.setAuthor(user.username, user.displayAvatarURL({ size: 128, format: 'png', dynamic: true }))
+		const display = new PaginatedMessage({
+			template: new EmbedBuilder() //
+				.setColor(getColor(message))
 				.setTitle(t(LanguageKeys.Commands.Management.RolesListTitle))
 		});
 
+		display.setIdle(minutes(5));
 		for (const page of chunk(roles, 10)) {
 			display.addPageEmbed((embed) => embed.setDescription(page.join('\n')));
 		}

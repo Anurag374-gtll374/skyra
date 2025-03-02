@@ -1,28 +1,19 @@
-import { readSettings } from '#lib/database/settings';
+import { readSettings, readSettingsPermissionNodes } from '#lib/database/settings';
 import { LanguageKeys } from '#lib/i18n/languageKeys';
-import type { GuildMessage } from '#lib/types';
-import { PermissionLevels } from '#lib/types/Enums';
+import type { SkyraCommand } from '#lib/structures';
+import { PermissionLevels, type GuildMessage } from '#lib/types';
 import { isAdmin, isGuildOwner } from '#utils/functions';
-import {
-	AsyncPreconditionResult,
-	Identifiers,
-	PieceContext,
-	Precondition,
-	PreconditionContext,
-	PreconditionOptions,
-	PreconditionResult
-} from '@sapphire/framework';
-import type { SkyraCommand } from '../commands/SkyraCommand';
+import { AllFlowsPrecondition, Identifiers, Precondition, type PreconditionOptions } from '@sapphire/framework';
 
-export abstract class PermissionsPrecondition extends Precondition {
+export abstract class PermissionsPrecondition extends AllFlowsPrecondition {
 	private readonly guildOnly: boolean;
 
-	public constructor(context: PieceContext, options: PermissionsPrecondition.Options = {}) {
+	public constructor(context: Precondition.LoaderContext, options: PermissionsPrecondition.Options = {}) {
 		super(context, options);
 		this.guildOnly = options.guildOnly ?? true;
 	}
 
-	public async run(message: GuildMessage, command: SkyraCommand, context: PermissionsPrecondition.Context): PermissionsPrecondition.AsyncResult {
+	public override async messageRun(message: GuildMessage, command: SkyraCommand, context: Precondition.Context): Precondition.AsyncResult {
 		// If not in a guild, resolve on an error:
 		if (message.guild === null || message.member === null) {
 			return this.guildOnly ? this.error({ identifier: Identifiers.PreconditionGuildOnly }) : this.ok();
@@ -30,7 +21,8 @@ export abstract class PermissionsPrecondition extends Precondition {
 
 		// If it should skip, go directly to handle:
 		if (await this.shouldRun(message, command)) {
-			const nodes = await readSettings(message.guild, (settings) => settings.permissionNodes);
+			const settings = await readSettings(message.guild);
+			const nodes = readSettingsPermissionNodes(settings);
 			const result = nodes.run(message.member, command);
 			if (result) return this.ok();
 			if (result === false) return this.error({ identifier: LanguageKeys.Preconditions.PermissionNodes });
@@ -40,7 +32,21 @@ export abstract class PermissionsPrecondition extends Precondition {
 		return this.handle(message, command, context);
 	}
 
-	public abstract handle(message: GuildMessage, command: SkyraCommand, context: PermissionsPrecondition.Context): PermissionsPrecondition.Result;
+	// Handled by Discord's permissions system:
+	public override chatInputRun() {
+		return this.ok();
+	}
+
+	// Handled by Discord's permissions system:
+	public override contextMenuRun() {
+		return this.ok();
+	}
+
+	public abstract handle(
+		message: GuildMessage,
+		command: SkyraCommand,
+		context: PermissionsPrecondition.LoaderContext
+	): PermissionsPrecondition.Result;
 
 	private async shouldRun(message: GuildMessage, command: SkyraCommand) {
 		// Guarded commands cannot be modified:
@@ -57,9 +63,9 @@ export abstract class PermissionsPrecondition extends Precondition {
 }
 
 export namespace PermissionsPrecondition {
-	export type Context = PreconditionContext;
-	export type Result = PreconditionResult;
-	export type AsyncResult = AsyncPreconditionResult;
+	export type LoaderContext = Precondition.Context;
+	export type Result = Precondition.Result;
+	export type AsyncResult = Precondition.AsyncResult;
 	export interface Options extends PreconditionOptions {
 		guildOnly?: boolean;
 	}

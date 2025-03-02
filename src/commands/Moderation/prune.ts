@@ -1,22 +1,15 @@
-import { GuildSettings, readSettings, writeSettings } from '#lib/database';
 import { LanguageKeys } from '#lib/i18n/languageKeys';
 import { SkyraCommand } from '#lib/structures';
-import type { GuildMessage } from '#lib/types';
-import { PermissionLevels } from '#lib/types/Enums';
-import { days, floatPromise, seconds } from '#utils/common';
-import { andMix, BooleanFn } from '#utils/common/comparators';
-import { formatMessage } from '#utils/formatters';
-import { sendTemporaryMessage } from '#utils/functions';
+import { PermissionLevels, type GuildMessage } from '#lib/types';
 import { urlRegex } from '#utils/Links/UrlRegex';
-import { metadata, TypeCodes } from '#utils/moderationConstants';
+import { days, seconds } from '#utils/common';
+import { andMix, type BooleanFn } from '#utils/common/comparators';
+import { getLogger, sendTemporaryMessage } from '#utils/functions';
 import { getImageUrl } from '#utils/util';
 import { ApplyOptions } from '@sapphire/decorators';
-import { canSendAttachments } from '@sapphire/discord.js-utilities';
-import { Args, CommandOptionsRunTypeEnum, IArgument } from '@sapphire/framework';
+import { Args, Argument, CommandOptionsRunTypeEnum } from '@sapphire/framework';
 import { isNullish, isNullishOrEmpty } from '@sapphire/utilities';
-import { PermissionFlagsBits, RESTJSONErrorCodes } from 'discord-api-types/v9';
-import { Collection, MessageAttachment, MessageEmbed, TextChannel } from 'discord.js';
-import type { TFunction } from 'i18next';
+import { Collection, PermissionFlagsBits, RESTJSONErrorCodes, type TextChannel } from 'discord.js';
 
 const enum Position {
 	Before,
@@ -58,11 +51,11 @@ const includesOptions = ['include', 'includes', 'contain', 'contains'] as const;
 	runIn: [CommandOptionsRunTypeEnum.GuildAny]
 })
 export class UserCommand extends SkyraCommand {
-	private get timespan(): IArgument<number> {
-		return this.container.stores.get('arguments').get('timespan') as IArgument<number>;
+	private get timespan(): Argument<number> {
+		return this.container.stores.get('arguments').get('timespan') as Argument<number>;
 	}
 
-	public async messageRun(message: GuildMessage, args: SkyraCommand.Args) {
+	public override async messageRun(message: GuildMessage, args: SkyraCommand.Args) {
 		const limit = await args.pick('integer', { minimum: 1, maximum: 100 });
 		const filter = await this.getFilters(args);
 		const rawPosition = args.finished ? null : await args.pick(UserCommand.position);
@@ -82,14 +75,16 @@ export class UserCommand extends SkyraCommand {
 			filtered.set(message.id, message);
 		}
 
+		const logger = getLogger(message.guild);
+
 		// Perform a bulk delete, throw if it returns unknown message.
 		const filteredKeys = this.resolveKeys([...filtered.keys()], position, limit);
+		logger.prune.set(message.channelId, { userId: message.author.id });
 		await (message.channel as TextChannel).bulkDelete(filteredKeys).catch((error) => {
+			logger.prune.unset(message.channelId);
 			if (error.code !== RESTJSONErrorCodes.UnknownMessage) throw error;
 		});
 
-		// Send prune logs and reply to the channel
-		floatPromise(this.sendPruneLogs(message, args.t, filtered, filteredKeys));
 		if (silent) return null;
 
 		const content = args.t(LanguageKeys.Commands.Moderation.PruneAlert, { count: filteredKeys.length, total: limit });
@@ -101,7 +96,10 @@ export class UserCommand extends SkyraCommand {
 	}
 
 	private async getFilters(args: SkyraCommand.Args) {
-		const fns: BooleanFn<[GuildMessage]>[] = [];
+		const fns: BooleanFn<[GuildMessage]>[] = [
+			// Sanity check, only filter those that can be deleted:
+			(message) => message.deletable
+		];
 
 		const user = args.finished ? null : await args.pick('user').catch(() => null);
 		if (user !== null) fns.push((mes: GuildMessage) => mes.author.id === user.id);
@@ -135,7 +133,7 @@ export class UserCommand extends SkyraCommand {
 		if (parameter === null) return days(14);
 
 		const argument = this.timespan;
-		const optionResult = await argument.run(parameter, {
+		const result = await argument.run(parameter, {
 			args,
 			argument,
 			command: this,
@@ -144,51 +142,7 @@ export class UserCommand extends SkyraCommand {
 			minimum: 0,
 			maximum: days(14)
 		});
-		if (optionResult.success) return optionResult.value;
-		throw optionResult.error;
-	}
-
-	private async sendPruneLogs(message: GuildMessage, t: TFunction, messages: Collection<string, GuildMessage>, rawMessages: readonly string[]) {
-		const channelId = await readSettings(message.guild, GuildSettings.Channels.Logs.Prune);
-		if (isNullish(channelId)) return;
-
-		const channel = message.guild.channels.cache.get(channelId) as TextChannel | undefined;
-		if (typeof channel === 'undefined') {
-			await writeSettings(message.guild, [[GuildSettings.Channels.Logs.Prune, null]]);
-			return;
-		}
-
-		if (canSendAttachments(channel)) {
-			// Filter the messages collection by the deleted messages, so no extras are added.
-			messages = messages.filter((_, key) => rawMessages.includes(key));
-
-			const authorName = `${message.author.tag} (${message.author.id})`;
-			const authorAvatar = message.author.displayAvatarURL({ size: 128, format: 'png', dynamic: true });
-			const description = t(LanguageKeys.Commands.Moderation.PruneLogMessage, {
-				channel: (message.channel as TextChannel).toString(),
-				author: message.author.toString(),
-				count: messages.size
-			});
-
-			const embed = new MessageEmbed()
-				.setAuthor(authorName, authorAvatar)
-				.setDescription(description)
-				.setColor(UserCommand.kColor)
-				.setTimestamp();
-
-			// Send the message to the prune logs channel.
-			await channel.send({ embeds: [embed], files: [this.generateAttachment(t, messages)] });
-		}
-	}
-
-	private generateAttachment(t: TFunction, messages: Collection<string, GuildMessage>) {
-		const header = t(LanguageKeys.Commands.Moderation.PruneLogHeader);
-		const processed = messages
-			.map((message) => formatMessage(t, message))
-			.reverse()
-			.join('\n\n');
-		const buffer = Buffer.from(`${header}\n\n${processed}`);
-		return new MessageAttachment(buffer, 'prune.txt');
+		return result.unwrapRaw();
 	}
 
 	private static position = Args.make<Position>((parameter, { argument }) => {
@@ -200,7 +154,6 @@ export class UserCommand extends SkyraCommand {
 		return Args.ok(position);
 	});
 
-	private static readonly kColor = metadata.get(TypeCodes.Prune)!.color;
 	private static readonly kInviteRegExp = /(?:discord\.(?:gg|io|me|plus|link)|invite\.(?:gg|ink)|discord(?:app)?\.com\/invite)\/(?:[\w-]{2,})/i;
 	private static readonly kLinkRegExp = urlRegex({ requireProtocol: true, tlds: true });
 	private static readonly kCommandPrunePositions: Record<string, Position> = {

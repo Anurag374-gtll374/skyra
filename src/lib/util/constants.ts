@@ -1,27 +1,38 @@
 import { getRootData } from '@sapphire/pieces';
-import type { PostProcessorModule } from 'i18next';
+import { PermissionFlagsBits } from 'discord.js';
 import { join } from 'node:path';
 
 export const mainFolder = getRootData().root;
 export const rootFolder = join(mainFolder, '..');
-export const assetsFolder = join(rootFolder, 'assets');
-export const socialFolder = join(assetsFolder, 'images', 'social');
-export const cdnFolder = process.env.NODE_ENV === 'production' ? join('/var', 'www', 'skyra.pw', 'cdn') : join(assetsFolder, 'public');
 
 export const ZeroWidthSpace = '\u200B';
 export const LongWidthSpace = '\u3000';
 
-export const enum BrawlStarsEmojis {
-	Trophy = '<:bstrophy:742083351891935353>',
-	PowerPlay = '<:powerplay:746370227377405993>',
-	RoboRumble = '<:bsroborumble:742086199065182269>',
-	BossFight = '<:bsbossfight:742087586788540427>',
-	Exp = '<:bsxp:743434002139971636>',
-	GemGrab = '<:bsgemgrab:743430818780676137>',
-	SoloShowdown = '<:bssoloshowdown:743431454557732955>',
-	DuoShowdown = '<:bsduoshowdown:743431564674990151>',
-	ChampionshipChallenge = '<:bschallenge:746373277726801971>'
-}
+export const EmojiData = {
+	MessageAttachmentIcon: { id: '1006096566270033940', name: 'MessageAttachmentIcon', animated: false },
+	IntegrationIcon: { id: '1200230554440843264', name: 'IntegrationIcon', animated: false },
+	MembersIcon: { id: '1200212636441260103', name: 'MembersIcon', animated: false }
+} as const;
+
+export const ModeratorPermissionsList = [
+	['ManageChannels', PermissionFlagsBits.ManageChannels],
+	['ManageRoles', PermissionFlagsBits.ManageRoles],
+	['CreateGuildExpressions', PermissionFlagsBits.CreateGuildExpressions],
+	['ManageGuildExpressions', PermissionFlagsBits.ManageGuildExpressions],
+	['ManageWebhooks', PermissionFlagsBits.ManageWebhooks],
+	['ManageGuild', PermissionFlagsBits.ManageGuild],
+	['KickMembers', PermissionFlagsBits.KickMembers],
+	['BanMembers', PermissionFlagsBits.BanMembers],
+	['ModerateMembers', PermissionFlagsBits.ModerateMembers],
+	['MentionEveryone', PermissionFlagsBits.MentionEveryone],
+	['ManageMessages', PermissionFlagsBits.ManageMessages],
+	['ManageThreads', PermissionFlagsBits.ManageThreads],
+	['CreateEvents', PermissionFlagsBits.CreateEvents],
+	['ManageEvents', PermissionFlagsBits.ManageEvents],
+	['Administrator', PermissionFlagsBits.Administrator]
+] as const;
+
+export const ModeratorPermissionsBits = ModeratorPermissionsList.reduce((acc, [, bit]) => acc | bit, 0n);
 
 export const enum Emojis {
 	ArrowB = '<:ArrowB:694594285269680179>',
@@ -42,76 +53,69 @@ export const enum Emojis {
 	BoostLevel8 = '<:boostlvl8:764841388462178344>',
 	BoostLevel9 = '<:boostlvl9:764841388470698014>',
 	Bot = '<:bot:764788923851079702>',
+	IntegrationIcon = '<:IntegrationIcon:1200230554440843264>',
 	Frame = '<:frame:764845055356698644>',
 	GreenTick = '<:greenTick:637706251253317669>',
 	GreenTickSerialized = 's637706251253317669',
 	Loading = '<a:sloading:656988867403972629>',
 	RedCross = '<:redCross:637706251257511973>',
-	Shiny = '<:shiny:612364146792726539>',
-	Star = '<:Star:736337719982030910>',
-	StarEmpty = '<:StarEmpty:736337232738254849>',
-	StarHalf = '<:StarHalf:736337529900499034>',
-	/** This is the default Twemoji, uploaded as a custom emoji because iOS and Android do not render the emoji properly */
-	MaleSignEmoji = '<:2642:845772713770614874>',
-	/** This is the default Twemoji, uploaded as a custom emoji because iOS and Android do not render the emoji properly */
-	FemaleSignEmoji = '<:2640:845772713729720320>'
+	Calendar = '<:calendar_icon:1218607529702068294>',
+	Hourglass = '<:hourglass:1226106863574323230>',
+	Member = '<:member:1200212636441260103>',
+	ShieldMember = '<:shield_member:1218601473664094399>',
+	Moderator = '<:moderator:1226106865021095977>',
+	AutoModerator = '<:auto_moderator:1226106862147993650>',
+	SpammerIcon = '<:spammer:1206893298292232245>',
+	QuarantinedIcon = '<:quarantined:1206899526447923210>',
+	Reply = '<:reply:1225386830829191188>',
+	ReplyInactive = '<:reply_inactive:1225386832146075739>',
+	Flag = '<:flag:1225386828152963122>',
+	FlagInactive = '<:flag_inactive:1225386829558186028>',
+	Timer = '<:timer:1225500654399918170>',
+	Bucket = '<:bucket:1225500653212930160>',
+	Delete = '<:delete:1225386833307766854>',
+	DeleteInactive = '<:delete_inactive:1225386834394353675>',
+	Timeout = '<:timeout:1225498291131908178>',
+	Kick = '<:kick:1225498287092793427>',
+	Softban = '<:softban:1225498289131094016>',
+	Ban = '<:ban:1225498285637369916>'
 }
-
-export const helpUsagePostProcessor: PostProcessorModule = {
-	type: 'postProcessor',
-	name: 'helpUsagePostProcessor',
-	process(value, [key]) {
-		// If the value is equal to the key then it is an empty usage, so return an empty string
-		if (value === key) return '';
-		// Otherwise just return the value
-		return value;
-	}
-};
 
 export const enum BrandingColors {
 	Primary = 0x1e88e5,
 	Secondary = 0xff9d01
 }
 
-// eslint-disable-next-line @typescript-eslint/ban-types
-export type O = object;
+export const enum Urls {
+	GitHubOrganization = 'https://github.com/skyra-project',
+	GitHubRepository = 'https://github.com/skyra-project/skyra',
+	Website = 'https://skyra.pw'
+}
 
 export const enum CdnUrls {
-	AnilistLogo = 'https://cdn.skyra.pw/skyra-assets/anilist.png',
-	BannersBasePath = 'https://cdn.skyra.pw/skyra-assets/banners/',
-	CoinHeads = 'https://cdn.skyra.pw/skyra-assets/coins_heads.png',
-	CoinTails = 'https://cdn.skyra.pw/skyra-assets/coins_tails.png',
 	EscapeRopeGif = 'https://cdn.skyra.pw/skyra-assets/escape_rope.gif',
-	NodeJSLogo = 'https://cdn.skyra.pw/skyra-assets/nodejs_logo.png',
-	OverwatchLogo = 'https://cdn.skyra.pw/skyra-assets/overwatch_logo.png',
-	Pokedex = 'https://cdn.skyra.pw/skyra-assets/pokedex.png',
-	RevolvingHeartTwemoji = 'https://twemoji.maxcdn.com/72x72/1f49e.png',
-	StarWarsLogo = 'https://cdn.skyra.pw/skyra-assets/star-wars-api-logo.png',
+	RevolvingHeartTwemoji = 'https://cdn.jsdelivr.net/gh/twitter/twemoji@v14.0.2/assets/72x72/1f49e.png',
 	TwitchLogo = 'https://cdn.skyra.pw/skyra-assets/twitch_logo.png'
 }
 
+export const enum Invites {
+	Dragonite = 'https://discord.com/api/oauth2/authorize?client_id=931264626614763530&permissions=81920&scope=bot%20applications.commands',
+	Iriss = 'https://discord.com/api/oauth2/authorize?client_id=948377113457745990&permissions=326417868864&scope=bot%20applications.commands',
+	Nekokai = 'https://discord.com/api/oauth2/authorize?client_id=939613684592934992&permissions=16384&scope=bot%20applications.commands',
+	Teryl = 'https://discord.com/api/oauth2/authorize?client_id=948377583626637343&permissions=1074004032&scope=applications.commands%20bot',
+	Artiel = 'https://discord.com/api/oauth2/authorize?client_id=948377028028145755&permissions=51200&scope=applications.commands%20bot'
+}
+
 export const enum LanguageFormatters {
-	AndList = 'andList',
 	Duration = 'duration',
 	ExplicitContentFilter = 'explicitContentFilter',
 	MessageNotifications = 'messageNotifications',
 	Number = 'number',
 	NumberCompact = 'numberCompact',
 	HumanLevels = 'humanLevels',
-	InlineCodeblock = 'inlineCodeBlock',
-	CodeBlock = 'codeBlock',
-	JsCodeBlock = 'jsCodeBlock',
-	Ordinal = 'ordinal',
-	OrList = 'orList',
 	Permissions = 'permissions',
-	Random = 'random',
 	DateTime = 'dateTime',
-	ToTitleCase = 'toTitleCase',
-	PermissionsAndList = 'permissionsAndList'
-}
-
-export const enum Databases {
-	Guild = 'guilds'
+	HumanDateTime = 'humanDateTime'
 }
 
 export const enum Colors {
@@ -139,11 +143,4 @@ export const enum Colors {
 	Teal = 0x009688,
 	Yellow = 0xffeb3b,
 	Yellow300 = 0xfff176
-}
-
-export const enum CanvasColors {
-	BackgroundLight = '#FAFAFA',
-	BackgroundDark = '#212121',
-	IndicatorGreen = '#4CAF50',
-	IndicatorRed = '#F44336'
 }

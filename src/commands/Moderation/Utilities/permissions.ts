@@ -1,45 +1,141 @@
+import { getSupportedLanguageT, getSupportedUserLanguageT } from '#lib/i18n';
 import { LanguageKeys } from '#lib/i18n/languageKeys';
 import { SkyraCommand } from '#lib/structures';
-import type { GuildMessage } from '#lib/types';
-import { PermissionLevels } from '#lib/types/Enums';
-import { ZeroWidthSpace } from '#utils/constants';
+import { PermissionLevels, type GuildMessage } from '#lib/types';
+import { PermissionsBits, PermissionsBitsList } from '#utils/bits';
+import { ModeratorPermissionsBits, ModeratorPermissionsList } from '#utils/constants';
+import { getColor, getTag } from '#utils/util';
+import { EmbedBuilder, bold, chatInputApplicationCommandMention } from '@discordjs/builders';
 import { ApplyOptions } from '@sapphire/decorators';
-import { CommandOptionsRunTypeEnum } from '@sapphire/framework';
+import { ApplicationCommandRegistry, CommandOptionsRunTypeEnum } from '@sapphire/framework';
 import { send } from '@sapphire/plugin-editable-commands';
-import { PermissionFlagsBits } from 'discord-api-types/v9';
-import { MessageEmbed, Permissions, PermissionString } from 'discord.js';
+import { applyLocalizedBuilder, applyNameLocalizedBuilder, type TFunction } from '@sapphire/plugin-i18next';
+import { ApplicationCommandType, GuildMember, InteractionContextType, PermissionFlagsBits } from 'discord.js';
 
-const PERMISSION_FLAGS = Object.keys(Permissions.FLAGS) as PermissionString[];
+const Root = LanguageKeys.Commands.Permissions;
 
 @ApplyOptions<SkyraCommand.Options>({
-	description: LanguageKeys.Commands.Moderation.PermissionsDescription,
-	detailedDescription: LanguageKeys.Commands.Moderation.PermissionsExtended,
+	description: Root.Description,
+	detailedDescription: LanguageKeys.Commands.Shared.SlashOnlyDetailedDescription,
 	permissionLevel: PermissionLevels.Administrator,
 	requiredClientPermissions: [PermissionFlagsBits.EmbedLinks],
-	runIn: [CommandOptionsRunTypeEnum.GuildAny]
+	runIn: [CommandOptionsRunTypeEnum.GuildAny],
+	hidden: true
 })
 export class UserCommand extends SkyraCommand {
-	public async messageRun(message: GuildMessage, args: SkyraCommand.Args) {
-		const user = args.finished ? message.author : await args.pick('userName');
-		const member = await message.guild.members.fetch(user.id).catch(() => {
-			this.error(LanguageKeys.Misc.UserNotInGuild);
+	public override registerApplicationCommands(registry: ApplicationCommandRegistry) {
+		registry.registerChatInputCommand(
+			(builder) =>
+				applyLocalizedBuilder(builder, Root.Name, Root.Description)
+					.setContexts(InteractionContextType.Guild)
+					.setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+					.addUserOption((option) => applyLocalizedBuilder(option, Root.OptionsUser))
+					.addBooleanOption((option) => applyLocalizedBuilder(option, Root.OptionsListAll))
+					.addBooleanOption((option) => applyLocalizedBuilder(option, Root.OptionsListMissing))
+					.addBooleanOption((option) => applyLocalizedBuilder(option, Root.OptionsShow)),
+			{
+				idHints: [
+					'1291068970761322597', // skyra production
+					'1288416734960943135' // skyra-beta production
+				]
+			}
+		);
+
+		registry.registerContextMenuCommand(
+			(builder) =>
+				applyNameLocalizedBuilder(builder, Root.ContextMenuName)
+					.setType(ApplicationCommandType.User)
+					.setContexts(InteractionContextType.Guild)
+					.setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+			{
+				idHints: [
+					'1291068980647166052', // skyra production
+					'1288416736751648820' // skyra-beta production
+				]
+			}
+		);
+	}
+
+	public override async messageRun(message: GuildMessage, args: SkyraCommand.Args) {
+		const content = args.t(LanguageKeys.Commands.Shared.DeprecatedMessage, {
+			command: chatInputApplicationCommandMention(this.name, this.getGlobalCommandId())
 		});
+		return send(message, { content });
+	}
 
-		const { permissions } = member;
-		const list = [ZeroWidthSpace];
+	public override chatInputRun(interaction: SkyraCommand.ChatInputInteraction) {
+		const target = interaction.options.getMember('user') ?? interaction.member;
+		const listAll = interaction.options.getBoolean('list-all') ?? false;
+		const listMissing = interaction.options.getBoolean('list-missing') ?? false;
+		const show = interaction.options.getBoolean('show') ?? false;
 
-		if (permissions.has(Permissions.FLAGS.ADMINISTRATOR)) {
-			list.push(args.t(LanguageKeys.Commands.Moderation.PermissionsAll));
+		return this.#sharedRun(interaction, target, listAll, listMissing, show);
+	}
+
+	public override contextMenuRun(interaction: SkyraCommand.UserContextMenuInteraction) {
+		return this.#sharedRun(interaction, interaction.targetMember!, false, false, false);
+	}
+
+	#sharedRun(
+		interaction: SkyraCommand.ChatInputInteraction | SkyraCommand.UserContextMenuInteraction,
+		target: GuildMember,
+		listAll: boolean,
+		listMissing: boolean,
+		show: boolean
+	) {
+		let content: string;
+		const permissions = target.permissions.bitfield;
+
+		const t = (show ? getSupportedLanguageT : getSupportedUserLanguageT)(interaction);
+		if (PermissionsBits.has(permissions, PermissionFlagsBits.Administrator)) {
+			content = t(LanguageKeys.Commands.Moderation.PermissionsAll);
 		} else {
-			for (const flag of PERMISSION_FLAGS) {
-				list.push(`${permissions.has(flag) ? '🔹' : '🔸'} ${args.t(`permissions:${flag}`, flag)}`);
+			const list = listAll ? PermissionsBitsList : ModeratorPermissionsList;
+			content = listMissing ? this.#renderAllPermissions(t, permissions, list) : this.#renderPermissions(t, permissions, list);
+		}
+
+		const embed = new EmbedBuilder() //
+			.setColor(getColor(interaction))
+			.setTitle(t(Root.Title, { username: getTag(target.user), id: target.id }))
+			.setDescription(content);
+		return interaction.reply({ embeds: [embed], ephemeral: !show });
+	}
+
+	#renderPermissions(t: TFunction, permissions: bigint, list: readonly (readonly [string, bigint])[]): string {
+		const output: string[] = [];
+		for (const [name, flag] of list) {
+			if (PermissionsBits.has(permissions, flag)) {
+				const isModerator = this.#isModeratorFlag(flag);
+				const localizedName = isModerator ? bold(this.#localizePermission(t, name)) : this.#localizePermission(t, name);
+
+				output.push(localizedName);
 			}
 		}
 
-		const embed = new MessageEmbed()
-			.setColor(await this.container.db.fetchColor(message))
-			.setTitle(args.t(LanguageKeys.Commands.Moderation.Permissions, { username: user.tag, id: user.id }))
-			.setDescription(list.join('\n'));
-		return send(message, { embeds: [embed] });
+		return t(LanguageKeys.Globals.AndListValue, { value: output });
+	}
+
+	#renderAllPermissions(t: TFunction, permissions: bigint, list: readonly (readonly [string, bigint])[]): string {
+		const output: string[] = [];
+		for (const [name, flag] of list) {
+			const isModerator = this.#isModeratorFlag(flag);
+			const localizedName = isModerator ? bold(this.#localizePermission(t, name)) : this.#localizePermission(t, name);
+
+			if (PermissionsBits.has(permissions, flag)) {
+				output.push(`${isModerator ? '🔸' : '🔹'} ${localizedName}`);
+			} else {
+				output.push(`-# ◾ ${localizedName}`);
+			}
+		}
+
+		return output.join('\n');
+	}
+
+	#isModeratorFlag(flag: bigint) {
+		return PermissionsBits.any(flag, ModeratorPermissionsBits);
+	}
+
+	#localizePermission(t: TFunction, name: string) {
+		return t(`permissions:${name}`);
 	}
 }

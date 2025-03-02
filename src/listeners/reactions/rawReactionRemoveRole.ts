@@ -1,26 +1,24 @@
-import { GuildSettings, readSettings } from '#lib/database';
-import { Events } from '#lib/types/Enums';
+import { readSettings } from '#lib/database';
+import { Events } from '#lib/types';
 import { resolveEmojiId } from '#utils/functions';
 import { ApplyOptions } from '@sapphire/decorators';
 import { isGuildBasedChannel } from '@sapphire/discord.js-utilities';
-import { Listener, ListenerOptions } from '@sapphire/framework';
-import type { GatewayMessageReactionRemoveDispatch } from 'discord-api-types/v9';
-import type { TextChannel } from 'discord.js';
+import { Listener } from '@sapphire/framework';
+import type { GatewayMessageReactionRemoveDispatch, TextChannel } from 'discord.js';
 
-@ApplyOptions<ListenerOptions>({ event: Events.RawReactionRemove })
+@ApplyOptions<Listener.Options>({ event: Events.RawReactionRemove })
 export class UserListener extends Listener {
 	public async run(channel: TextChannel, data: GatewayMessageReactionRemoveDispatch['d']) {
 		// If the channel is not a text channel then stop processing
 		if (!isGuildBasedChannel(channel)) return;
 
 		const emojiId = resolveEmojiId(data.emoji);
-		const roleEntry = await readSettings(channel.guild, (settings) =>
-			settings[GuildSettings.ReactionRoles].find(
-				(entry) =>
-					resolveEmojiId(entry.emoji) === emojiId &&
-					entry.channel === data.channel_id &&
-					(entry.message ? entry.message === data.message_id : true)
-			)
+		const settings = await readSettings(channel.guild);
+		const roleEntry = settings.reactionRoles.find(
+			(entry) =>
+				resolveEmojiId(entry.emoji) === emojiId &&
+				entry.channel === data.channel_id &&
+				(entry.message ? entry.message === data.message_id : true)
 		);
 		if (!roleEntry) return;
 

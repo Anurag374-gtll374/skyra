@@ -1,28 +1,10 @@
 {
-	"dmDescription": "Sends a Direct Message.",
-	"dmExtended": {
-		"usages": [
-			"User, Message"
-		],
-		"extendedHelp": "The DM command is reserved for bot owners, and it's only used for very certain purposes, such as replying feedback messages sent by users.",
-		"explainedUsage": [
-			[
-				"User",
-				"The User to send a DM to"
-			],
-			[
-				"Message",
-				"The message to send"
-			]
-		],
-		"reminder": "Reserved for bot owners for replying purposes."
-	},
 	"evalDescription": "Evaluates arbitrary Javascript.",
 	"evalExtended": {
 		"usages": [
 			"Expression"
 		],
-		"extendedHelp": "The eval command evaluates code as-in, any error thrown from it will be handled.\nIt also uses the flags feature. Write --silent, --depth=number or --async to customize the output.\nThe --wait flag changes the time the eval will run. Defaults to 10 seconds. Accepts time in milliseconds.\nThe --output and --output-to flag accept either `file`, `log`, `haste` or `hastebin`.\nThe --delete flag makes the command delete the message that executed the message after evaluation.\nThe --silent flag will make it output nothing.\nThe --depth flag accepts a number, for example, --depth=2, to customize util.inspect's depth.\nThe --async flag will wrap the code into an async function where you can enjoy the use of await, however, if you want to return something, you will need the return keyword\nThe --showHidden flag will enable the showHidden option in util.inspect.\nThe --lang and --language flags allow different syntax highlight for the output.\nThe --json flag converts the output to json\nThe --no-timeout flag disables the timeout\nIf the output is too large, it'll send the output as a file, or in the console if the bot does not have the {{ATTACH_FILES, permissions}} permission.",
+		"extendedHelp": "The eval command evaluates code as-in, any error thrown from it will be handled.\nIt also uses the flags feature. Write --silent, --depth=number or --async to customize the output.\nThe --wait flag changes the time the eval will run. Defaults to 60 seconds. Accepts time in milliseconds.\nThe --silent flag will make it output nothing.\nThe --depth flag accepts a number, for example, --depth=2, to customize util.inspect's depth.\nThe --async flag will wrap the code into an async function where you can enjoy the use of await, however, if you want to return something, you will need the return keyword\nThe --showHidden flag will enable the showHidden option in util.inspect.\nThe --lang and --language flags allow different syntax highlight for the output.\nThe --json flag converts the output to json\nThe --no-timeout flag disables the timeout\nIf the output is too large, it'll send the output as a file.",
 		"explainedUsage": [
 			[
 				"Expression",
@@ -35,120 +17,14 @@
 		],
 		"reminder": "Reserved for bot owners."
 	},
-	"execDescription": "Execute Order 66.",
-	"execExtended": {
-		"usages": [
-			"Expression"
-		],
-		"extendedHelp": "You better not know about this.",
-		"explainedUsage": [
-			[
-				"Expression",
-				"The expression to evaluate"
-			]
-		]
-	},
-	"donateDescription": "Get information about how to donate to keep Skyra alive longer.",
-	"donateExtended": {
-		"extendedHelp": "Skyra Project started on 24th October 2016, if you are reading this, you are using version {{VERSION}}. The development team improves a lot in every iteration of Skyra.\n\nHowever, not everything is free and we need your help to keep Skyra alive.\nWe will be very thankful if you help us.\nWe have been working on a lot of things, and Skyra is precious to us. Take care of her ❤\n\nDo you want to support this amazing project? Feel free to do so! https://donate.skyra.pw/patreon or https://donate.skyra.pw/kofi"
-	},
-	"echoDescription": "Make Skyra send a message to this (or another) channel.",
-	"echoExtended": {
-		"usages": [
-			"Message",
-			"Channel Message"
-		],
-		"extendedHelp": "This should be very obvious...",
-		"explainedUsage": [
-			[
-				"Channel",
-				"The channel to output text to"
-			],
-			[
-				"Message",
-				"The message to send"
-			]
-		],
-		"reminder": "Reserved for bot owners."
-	},
-	"statsDescription": "Provides some details about the bot and stats.",
-	"statsExtended": {
-		"extendedHelp": "This should be very obvious..."
-	},
 	"evalTimeout": "TIMEOUT: Took longer than {{seconds}} seconds.",
 	"evalError": "**Error**:{{output}}\n**Type**:{{type}}\n{{time}}",
-	"statsTitles": {
-		"stats": "Statistics",
-		"uptime": "Uptime",
-		"serverUsage": "Server Usage"
-	},
-	"statsFields": {
-		"stats": "• **Users**: {{stats.users, number}}\n• **Servers**: {{stats.guilds, number}}\n• **Channels**: {{stats.channels, number}}\n• **Discord.js**: {{stats.version}}\n• **Node.js**: {{stats.nodeJs}}",
-		"uptime": "• **Host**: {{uptime.host, duration}}\n• **Total**: {{uptime.total, duration}}\n• **Client**: {{uptime.client, duration}}",
-		"serverUsage": "• **CPU Load**: {{usage.cpuLoad}}\n• **Heap**: {{usage.ramUsed, number}}MB (Total: {{usage.ramTotal, number}}MB)"
-	},
-	"disable": "+ Successfully disabled {{type}}: {{name}}",
-	"disableDescription": "Re-disables or temporarily disables a command/preconditions/event. Default state restored on reboot.",
-	"disableExtended": {
-		"usages": [
-			"Piece"
-		],
-		"extendedHelp": "Disable a piece that was previously enabled",
-		"explainedUsage": [
-			[
-				"Piece",
-				"The piece to disable"
-			]
-		],
-		"reminder": "Reserved for bot owners."
-	},
-	"disableWarn": "You probably don't want to disable that, since you wouldn't be able to run any command to enable it again",
 	"dmNotSent": "I cannot send you a message in DMs, did you block me?",
 	"dmSent": "I have sent you the message in DMs.",
-	"enable": "+ Successfully enabled {{type}}: {{name}}",
-	"enableDescription": "Re-enables or temporarily enables a command/preconditions. Default state restored on reboot.",
-	"enableExtended": {
-		"usages": [
-			"Piece"
-		],
-		"extendedHelp": "Enables a piece that was previously disabled",
-		"explainedUsage": [
-			[
-				"Piece",
-				"The piece to enable"
-			]
-		],
-		"reminder": "Reserved for bot owners."
-	},
 	"reboot": "{{LOADING}} Rebooting...",
 	"rebootDescription": "Reboots the bot.",
 	"rebootExtended": {
 		"extendedHelp": "The bot goes boom, then the bot goes revive.",
 		"reminder": "Reserved for bot owners."
-	},
-	"reload": "{{GREENTICK}} Reloaded {{type}}: {{name}}. (Took: {{time}})",
-	"reloadAll": "{{GREENTICK}} Reloaded all {{type}}. (Took: {{time}})",
-	"reloadDescription": "Reloads a Sapphire piece, or all pieces of a Sapphire store.",
-	"reloadExtended": {
-		"usages": [
-			"Piece/language/everything"
-		],
-		"extendedHelp": "Hot-reloads a piece.",
-		"explainedUsage": [
-			[
-				"Piece/language/everything",
-				"The piece or language to reload, or \"everything\" to reload everything"
-			]
-		],
-		"reminder": "Be careful with potentially duplicate names as you can easily trigger reloading all pieces!"
-	},
-	"reloadEverything": "{{GREENTICK}} Reloaded everything. (Took: {{time}})",
-	"reloadInvalidEverything": "I was not able to resolve `{{parameter}}` to a valid \"everything\".\n**Hint**: The only possible value is `everything`.",
-	"reloadLanguage": "{{GREENTICK}} Reloaded language resource `{{language}}`. (Took: {{time}})",
-	"supportDescription": "Show support instructions",
-	"supportEmbedDescription": "Then you should probably join [Skyra's Lounge](https://join.skyra.pw)! There, you can receive support by the developers and other members of the community!",
-	"supportEmbedTitle": "Looking for help, {{username}}?",
-	"supportExtended": {
-		"extendedHelp": "This command gives you a link to *Skyra's Lounge*, the best place for everything related to me."
 	}
 }

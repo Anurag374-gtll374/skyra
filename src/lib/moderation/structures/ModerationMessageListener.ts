@@ -1,26 +1,28 @@
-import { AdderKey, GuildEntity, GuildSettings, readSettings } from '#lib/database';
+import { readSettings, readSettingsAdder, type AdderKey, type GuildSettingsOfType, type ReadonlyGuildData } from '#lib/database';
 import type { AdderError } from '#lib/database/utils/Adder';
-import type { CustomFunctionGet, CustomGet, GuildMessage } from '#lib/types';
-import { Events } from '#lib/types/Enums';
-import { floatPromise } from '#utils/common';
-import { getModeration, getSecurity, isModerator } from '#utils/functions';
-import { canSendMessages, GuildTextBasedChannelTypes } from '@sapphire/discord.js-utilities';
-import { Listener, ListenerOptions, PieceContext } from '@sapphire/framework';
-import type { Awaitable, Nullish, PickByValue } from '@sapphire/utilities';
-import type { GuildMember, MessageEmbed } from 'discord.js';
-import type { TFunction } from 'i18next';
-import { SelfModeratorBitField, SelfModeratorHardActionFlags } from './SelfModeratorBitField';
+import { getT } from '#lib/i18n';
+import { ModerationActions } from '#lib/moderation/actions/index';
+import { AutoModerationOnInfraction, AutoModerationPunishment } from '#lib/moderation/structures/AutoModerationOnInfraction';
+import { Events, type GuildMessage, type TypedFT, type TypedT } from '#lib/types';
+import { floatPromise, seconds } from '#utils/common';
+import { getModeration, isModerator } from '#utils/functions';
+import { EmbedBuilder } from '@discordjs/builders';
+import { canSendMessages, type GuildTextBasedChannelTypes } from '@sapphire/discord.js-utilities';
+import { Listener } from '@sapphire/framework';
+import type { TFunction } from '@sapphire/plugin-i18next';
+import { isNullishOrZero, type Awaitable, type Nullish } from '@sapphire/utilities';
+import type { GuildMember } from 'discord.js';
 
 export abstract class ModerationMessageListener<T = unknown> extends Listener {
-	private readonly keyEnabled: PickByValue<GuildEntity, boolean>;
-	private readonly ignoredRolesPath: PickByValue<GuildEntity, readonly string[]>;
-	private readonly ignoredChannelsPath: PickByValue<GuildEntity, readonly string[]>;
-	private readonly softPunishmentPath: PickByValue<GuildEntity, number>;
+	private readonly keyEnabled: GuildSettingsOfType<boolean>;
+	private readonly ignoredRolesPath: GuildSettingsOfType<readonly string[]>;
+	private readonly ignoredChannelsPath: GuildSettingsOfType<readonly string[]>;
+	private readonly softPunishmentPath: GuildSettingsOfType<number>;
 	private readonly hardPunishmentPath: HardPunishment;
-	private readonly reasonLanguageKey: CustomGet<string, string>;
-	private readonly reasonLanguageKeyWithMaximum: CustomFunctionGet<string, { amount: number; maximum: number }, string>;
+	private readonly reasonLanguageKey: TypedT<string>;
+	private readonly reasonLanguageKeyWithMaximum: TypedFT<{ amount: number; maximum: number }, string>;
 
-	public constructor(context: PieceContext, options: ModerationMessageListener.Options) {
+	public constructor(context: ModerationMessageListener.LoaderContext, options: ModerationMessageListener.Options) {
 		super(context, { ...options, event: Events.GuildUserMessage });
 
 		this.keyEnabled = options.keyEnabled;
@@ -41,124 +43,104 @@ export abstract class ModerationMessageListener<T = unknown> extends Listener {
 		const preProcessed = await this.preProcess(message);
 		if (preProcessed === null) return;
 
-		const [logChannelId, filter, adder, language] = await readSettings(message.guild, (settings) => [
-			settings[GuildSettings.Channels.Logs.Moderation],
-			settings[this.softPunishmentPath],
-			settings.adders[this.hardPunishmentPath.adder],
-			settings.getLanguage()
-		]);
-		const bitField = new SelfModeratorBitField(filter);
-		this.processSoftPunishment(message, logChannelId, language, bitField, preProcessed);
+		const settings = await readSettings(message.guild);
+
+		const logChannelId = settings.channelsLogsModeration;
+		const filter = settings[this.softPunishmentPath];
+		const t = getT(settings.language);
+		this.processSoftPunishment(message, logChannelId, t, filter, preProcessed);
 
 		if (this.hardPunishmentPath === null) return;
 
-		if (!adder) return this.processHardPunishment(message, language, 0, 0);
+		const adder = readSettingsAdder(settings, this.hardPunishmentPath.adder);
+		if (!adder) return this.processHardPunishment(message, t, 0, 0);
 
 		const points = typeof preProcessed === 'number' ? preProcessed : 1;
 		try {
 			adder.add(message.author.id, points);
 		} catch (error) {
-			await this.processHardPunishment(message, language, (error as AdderError).amount, adder.maximum);
+			await this.processHardPunishment(message, t, (error as AdderError).amount, adder.maximum);
 		}
 	}
 
-	protected processSoftPunishment(
-		message: GuildMessage,
-		logChannelId: string | Nullish,
-		language: TFunction,
-		bitField: SelfModeratorBitField,
-		preProcessed: T
-	) {
-		if (bitField.has(SelfModeratorBitField.FLAGS.DELETE) && message.deletable) {
+	protected processSoftPunishment(message: GuildMessage, logChannelId: string | Nullish, language: TFunction, bitfield: number, preProcessed: T) {
+		if (AutoModerationOnInfraction.has(bitfield, AutoModerationOnInfraction.flags.Delete) && message.deletable) {
 			floatPromise(this.onDelete(message, language, preProcessed) as any);
 		}
 
-		if (bitField.has(SelfModeratorBitField.FLAGS.ALERT) && canSendMessages(message.channel)) {
+		if (AutoModerationOnInfraction.has(bitfield, AutoModerationOnInfraction.flags.Alert) && canSendMessages(message.channel)) {
 			floatPromise(this.onAlert(message, language, preProcessed) as any);
 		}
 
-		if (bitField.has(SelfModeratorBitField.FLAGS.LOG)) {
+		if (AutoModerationOnInfraction.has(bitfield, AutoModerationOnInfraction.flags.Log)) {
 			floatPromise(this.onLog(message, logChannelId, language, preProcessed) as any);
 		}
 	}
 
 	protected async processHardPunishment(message: GuildMessage, language: TFunction, points: number, maximum: number) {
-		const [action, duration] = await readSettings(message.guild, [this.hardPunishmentPath.action, this.hardPunishmentPath.actionDuration]);
+		const settings = await readSettings(message.guild);
+		const action = settings[this.hardPunishmentPath.action];
+		const duration = settings[this.hardPunishmentPath.actionDuration];
 		switch (action) {
-			case SelfModeratorHardActionFlags.Warning:
+			case AutoModerationPunishment.Warning:
 				await this.onWarning(message, language, points, maximum, duration);
 				break;
-			case SelfModeratorHardActionFlags.Kick:
+			case AutoModerationPunishment.Kick:
 				await this.onKick(message, language, points, maximum);
 				break;
-			case SelfModeratorHardActionFlags.Mute:
+			case AutoModerationPunishment.Timeout:
+				await this.onTimeout(message, language, points, maximum, duration);
+				break;
+			case AutoModerationPunishment.Mute:
 				await this.onMute(message, language, points, maximum, duration);
 				break;
-			case SelfModeratorHardActionFlags.SoftBan:
+			case AutoModerationPunishment.Softban:
 				await this.onSoftBan(message, language, points, maximum);
 				break;
-			case SelfModeratorHardActionFlags.Ban:
+			case AutoModerationPunishment.Ban:
 				await this.onBan(message, language, points, maximum, duration);
 				break;
 		}
 	}
 
-	protected async onWarning(message: GuildMessage, t: TFunction, points: number, maximum: number, duration: number | null) {
+	protected async onWarning(message: GuildMessage, t: TFunction, points: number, maximum: number, duration: bigint | null) {
 		await this.createActionAndSend(message, () =>
-			getSecurity(message.guild).actions.warning({
-				userId: message.author.id,
-				moderatorId: process.env.CLIENT_ID,
-				reason: maximum === 0 ? t(this.reasonLanguageKey) : t(this.reasonLanguageKeyWithMaximum, { amount: points, maximum }),
-				duration
-			})
+			ModerationActions.warning.apply(message.guild, { user: message.author, reason: this.#getReason(t, points, maximum), duration })
 		);
 	}
 
 	protected async onKick(message: GuildMessage, t: TFunction, points: number, maximum: number) {
 		await this.createActionAndSend(message, () =>
-			getSecurity(message.guild).actions.kick({
-				userId: message.author.id,
-				moderatorId: process.env.CLIENT_ID,
-				reason: maximum === 0 ? t(this.reasonLanguageKey) : t(this.reasonLanguageKeyWithMaximum, { amount: points, maximum })
-			})
+			ModerationActions.kick.apply(message.guild, { user: message.author, reason: this.#getReason(t, points, maximum) })
 		);
 	}
 
-	protected async onMute(message: GuildMessage, t: TFunction, points: number, maximum: number, duration: number | null) {
+	protected async onTimeout(message: GuildMessage, t: TFunction, points: number, maximum: number, duration: bigint | null) {
+		if (isNullishOrZero(duration)) return;
 		await this.createActionAndSend(message, () =>
-			getSecurity(message.guild).actions.mute({
-				userId: message.author.id,
-				moderatorId: process.env.CLIENT_ID,
-				reason: maximum === 0 ? t(this.reasonLanguageKey) : t(this.reasonLanguageKeyWithMaximum, { amount: points, maximum }),
-				duration
-			})
+			ModerationActions.timeout.apply(message.guild, { user: message.author, reason: this.#getReason(t, points, maximum), duration })
+		);
+	}
+
+	protected async onMute(message: GuildMessage, t: TFunction, points: number, maximum: number, duration: bigint | null) {
+		await this.createActionAndSend(message, () =>
+			ModerationActions.mute.apply(message.guild, { user: message.author, reason: this.#getReason(t, points, maximum), duration })
 		);
 	}
 
 	protected async onSoftBan(message: GuildMessage, t: TFunction, points: number, maximum: number) {
 		await this.createActionAndSend(message, () =>
-			getSecurity(message.guild).actions.softBan(
-				{
-					userId: message.author.id,
-					moderatorId: process.env.CLIENT_ID,
-					reason: maximum === 0 ? t(this.reasonLanguageKey) : t(this.reasonLanguageKeyWithMaximum, { amount: points, maximum })
-				},
-				1
+			ModerationActions.softban.apply(
+				message.guild,
+				{ user: message.author, reason: this.#getReason(t, points, maximum) },
+				{ context: seconds.fromMinutes(5) }
 			)
 		);
 	}
 
-	protected async onBan(message: GuildMessage, t: TFunction, points: number, maximum: number, duration: number | null) {
+	protected async onBan(message: GuildMessage, t: TFunction, points: number, maximum: number, duration: bigint | number | null) {
 		await this.createActionAndSend(message, () =>
-			getSecurity(message.guild).actions.ban(
-				{
-					userId: message.author.id,
-					moderatorId: process.env.CLIENT_ID,
-					reason: maximum === 0 ? t(this.reasonLanguageKey) : t(this.reasonLanguageKeyWithMaximum, { amount: points, maximum }),
-					duration
-				},
-				0
-			)
+			ModerationActions.ban.apply(message.guild, { user: message.author, reason: this.#getReason(t, points, maximum), duration })
 		);
 	}
 
@@ -173,7 +155,7 @@ export abstract class ModerationMessageListener<T = unknown> extends Listener {
 			Events.GuildMessageLog,
 			message.guild,
 			logChannelId,
-			GuildSettings.Channels.Logs.Moderation,
+			'channelsLogsModeration',
 			this.onLogMessage.bind(this, message, language, value)
 		);
 	}
@@ -181,18 +163,15 @@ export abstract class ModerationMessageListener<T = unknown> extends Listener {
 	protected abstract preProcess(message: GuildMessage): Promise<T | null> | T | null;
 	protected abstract onDelete(message: GuildMessage, language: TFunction, value: T): Awaitable<unknown>;
 	protected abstract onAlert(message: GuildMessage, language: TFunction, value: T): Awaitable<unknown>;
-	protected abstract onLogMessage(message: GuildMessage, language: TFunction, value: T): Awaitable<MessageEmbed>;
+	protected abstract onLogMessage(message: GuildMessage, language: TFunction, value: T): Awaitable<EmbedBuilder>;
 
-	private checkPreRun(message: GuildMessage) {
-		return readSettings(
-			message.guild,
-			(settings) =>
-				settings[this.keyEnabled] && this.checkMessageChannel(settings, message.channel) && this.checkMemberRoles(settings, message.member)
-		);
+	private async checkPreRun(message: GuildMessage) {
+		const settings = await readSettings(message.guild);
+		return settings[this.keyEnabled] && this.checkMessageChannel(settings, message.channel) && this.checkMemberRoles(settings, message.member);
 	}
 
-	private checkMessageChannel(settings: GuildEntity, channel: GuildTextBasedChannelTypes) {
-		const globalIgnore = settings[GuildSettings.Selfmod.IgnoreChannels];
+	private checkMessageChannel(settings: ReadonlyGuildData, channel: GuildTextBasedChannelTypes) {
+		const globalIgnore = settings.selfmodIgnoredChannels;
 		if (globalIgnore.includes(channel.id)) return false;
 
 		const localIgnore = settings[this.ignoredChannelsPath] as readonly string[];
@@ -201,7 +180,7 @@ export abstract class ModerationMessageListener<T = unknown> extends Listener {
 		return true;
 	}
 
-	private checkMemberRoles(settings: GuildEntity, member: GuildMember | null) {
+	private checkMemberRoles(settings: ReadonlyGuildData, member: GuildMember | null) {
 		if (member === null) return false;
 
 		const ignoredRoles = settings[this.ignoredRolesPath];
@@ -210,22 +189,28 @@ export abstract class ModerationMessageListener<T = unknown> extends Listener {
 		const { roles } = member;
 		return !ignoredRoles.some((id) => roles.cache.has(id));
 	}
+
+	#getReason(t: TFunction, points: number, maximum: number) {
+		return maximum === 0 ? t(this.reasonLanguageKey) : t(this.reasonLanguageKeyWithMaximum, { amount: points, maximum });
+	}
 }
 
 export interface HardPunishment {
-	action: PickByValue<GuildEntity, number>;
-	actionDuration: PickByValue<GuildEntity, number | null>;
+	action: GuildSettingsOfType<number>;
+	actionDuration: GuildSettingsOfType<bigint | null>;
 	adder: AdderKey;
 }
 
 export namespace ModerationMessageListener {
-	export interface Options extends ListenerOptions {
-		keyEnabled: PickByValue<GuildEntity, boolean>;
-		ignoredRolesPath: PickByValue<GuildEntity, readonly string[]>;
-		ignoredChannelsPath: PickByValue<GuildEntity, readonly string[]>;
-		softPunishmentPath: PickByValue<GuildEntity, number>;
+	export interface Options extends Listener.Options {
+		keyEnabled: GuildSettingsOfType<boolean>;
+		ignoredRolesPath: GuildSettingsOfType<readonly string[]>;
+		ignoredChannelsPath: GuildSettingsOfType<readonly string[]>;
+		softPunishmentPath: GuildSettingsOfType<number>;
 		hardPunishmentPath: HardPunishment;
-		reasonLanguageKey: CustomGet<string, string>;
-		reasonLanguageKeyWithMaximum: CustomFunctionGet<string, { amount: number; maximum: number }, string>;
+		reasonLanguageKey: TypedT<string>;
+		reasonLanguageKeyWithMaximum: TypedFT<{ amount: number; maximum: number }, string>;
 	}
+	export type JSON = Listener.JSON;
+	export type LoaderContext = Listener.LoaderContext;
 }

@@ -1,24 +1,25 @@
-import { GuildSettings, readSettings } from '#lib/database';
+import { readSettings } from '#lib/database';
 import { LanguageKeys } from '#lib/i18n/languageKeys';
 import { ModerationMessageListener } from '#lib/moderation';
 import type { GuildMessage } from '#lib/types';
 import { Colors } from '#utils/constants';
 import { deleteMessage, sendTemporaryMessage } from '#utils/functions';
-import { getContent } from '#utils/util';
+import { getContent, getFullEmbedAuthor } from '#utils/util';
+import { EmbedBuilder } from '@discordjs/builders';
 import { ApplyOptions } from '@sapphire/decorators';
-import { MessageEmbed, TextChannel } from 'discord.js';
-import type { TFunction } from 'i18next';
+import type { TFunction } from '@sapphire/plugin-i18next';
+import type { TextChannel } from 'discord.js';
 
 @ApplyOptions<ModerationMessageListener.Options>({
 	reasonLanguageKey: LanguageKeys.Events.Moderation.Messages.ModerationMessages,
 	reasonLanguageKeyWithMaximum: LanguageKeys.Events.Moderation.Messages.ModerationMessagesWithMaximum,
-	keyEnabled: GuildSettings.Selfmod.Messages.Enabled,
-	ignoredChannelsPath: GuildSettings.Selfmod.Messages.IgnoredChannels,
-	ignoredRolesPath: GuildSettings.Selfmod.Messages.IgnoredRoles,
-	softPunishmentPath: GuildSettings.Selfmod.Messages.SoftAction,
+	keyEnabled: 'selfmodMessagesEnabled',
+	ignoredChannelsPath: 'selfmodMessagesIgnoredChannels',
+	ignoredRolesPath: 'selfmodMessagesIgnoredRoles',
+	softPunishmentPath: 'selfmodMessagesSoftAction',
 	hardPunishmentPath: {
-		action: GuildSettings.Selfmod.Messages.HardAction,
-		actionDuration: GuildSettings.Selfmod.Messages.HardActionDuration,
+		action: 'selfmodMessagesHardAction',
+		actionDuration: 'selfmodMessagesHardActionDuration',
 		adder: 'messages'
 	}
 })
@@ -27,10 +28,8 @@ export class UserModerationMessageListener extends ModerationMessageListener {
 
 	protected async preProcess(message: GuildMessage): Promise<1 | null> {
 		// Retrieve the threshold
-		const [threshold, queueSize] = await readSettings(message.guild, [
-			GuildSettings.Selfmod.Messages.Maximum,
-			GuildSettings.Selfmod.Messages.QueueSize
-		]);
+		const settings = await readSettings(message.guild);
+		const threshold = settings.selfmodMessagesMaximum;
 		if (threshold === 0) return null;
 
 		// Retrieve the content
@@ -39,7 +38,7 @@ export class UserModerationMessageListener extends ModerationMessageListener {
 
 		// Retrieve the contents, then update them to add the new content to the FILO queue.
 		const contents = this.getContents(message);
-		const count = this.updateContents(contents, content.toLowerCase(), queueSize);
+		const count = this.updateContents(contents, content.toLowerCase(), settings.selfmodMessagesQueueSize);
 
 		// If count is bigger than threshold
 		// - return `count`
@@ -56,11 +55,11 @@ export class UserModerationMessageListener extends ModerationMessageListener {
 	}
 
 	protected onLogMessage(message: GuildMessage, t: TFunction) {
-		return new MessageEmbed()
+		return new EmbedBuilder()
 			.setDescription(message.content)
 			.setColor(Colors.Red)
-			.setAuthor(`${message.author.tag} (${message.author.id})`, message.author.displayAvatarURL({ size: 128, format: 'png', dynamic: true }))
-			.setFooter(`#${(message.channel as TextChannel).name} | ${t(LanguageKeys.Events.Moderation.Messages.MessageFooter)}`)
+			.setAuthor(getFullEmbedAuthor(message.author, message.url))
+			.setFooter({ text: `#${(message.channel as TextChannel).name} | ${t(LanguageKeys.Events.Moderation.Messages.MessageFooter)}` })
 			.setTimestamp();
 	}
 

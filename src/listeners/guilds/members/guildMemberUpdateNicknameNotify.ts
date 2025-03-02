@@ -1,18 +1,21 @@
-import { GuildSettings, readSettings } from '#lib/database';
+import { readSettings } from '#lib/database';
+import { getT } from '#lib/i18n';
 import { LanguageKeys } from '#lib/i18n/languageKeys';
-import { Events } from '#lib/types/Enums';
+import { Events } from '#lib/types';
 import { Colors } from '#utils/constants';
+import { getFullEmbedAuthor } from '#utils/util';
+import { EmbedBuilder } from '@discordjs/builders';
 import { ApplyOptions } from '@sapphire/decorators';
-import { Listener, ListenerOptions } from '@sapphire/framework';
+import { Listener } from '@sapphire/framework';
+import type { TFunction } from '@sapphire/plugin-i18next';
 import { isNullish } from '@sapphire/utilities';
-import { GuildMember, MessageEmbed } from 'discord.js';
-import type { TFunction } from 'i18next';
+import type { GuildMember } from 'discord.js';
 
-@ApplyOptions<ListenerOptions>({ event: Events.GuildMemberUpdate })
+@ApplyOptions<Listener.Options>({ event: Events.GuildMemberUpdate })
 export class UserListener extends Listener {
 	public async run(previous: GuildMember, next: GuildMember) {
-		const key = GuildSettings.Channels.Logs.MemberNickNameUpdate;
-		const [logChannelId, t] = await readSettings(next, (settings) => [settings[key], settings.getLanguage()]);
+		const settings = await readSettings(next);
+		const logChannelId = settings.channelsLogsMemberNicknameUpdate;
 		if (isNullish(logChannelId)) return;
 
 		// Send the Nickname log
@@ -20,12 +23,13 @@ export class UserListener extends Listener {
 		const nextNickname = next.nickname;
 		const { user } = next;
 		if (prevNickname !== nextNickname) {
-			this.container.client.emit(Events.GuildMessageLog, next.guild, logChannelId, key, () =>
-				new MessageEmbed()
+			const t = getT(settings.language);
+			this.container.client.emit(Events.GuildMessageLog, next.guild, logChannelId, 'channelsLogsMemberNicknameUpdate', () =>
+				new EmbedBuilder()
 					.setColor(Colors.Yellow)
-					.setAuthor(`${user.tag} (${user.id})`, user.displayAvatarURL({ size: 128, format: 'png', dynamic: true }))
+					.setAuthor(getFullEmbedAuthor(user))
 					.setDescription(this.getNameDescription(t, prevNickname, nextNickname))
-					.setFooter(t(LanguageKeys.Events.Guilds.Members.NicknameUpdate))
+					.setFooter({ text: t(LanguageKeys.Events.Guilds.Members.NicknameUpdate) })
 					.setTimestamp()
 			);
 		}
@@ -37,9 +41,7 @@ export class UserListener extends Listener {
 				previousName === null
 					? LanguageKeys.Events.Guilds.Members.NameUpdatePreviousWasNotSet
 					: LanguageKeys.Events.Guilds.Members.NameUpdatePreviousWasSet,
-				{
-					previousName
-				}
+				{ previousName }
 			),
 			t(
 				nextName === null

@@ -1,55 +1,48 @@
-import { GuildSettings, readSettings, writeSettings } from '#lib/database';
+import { readSettings } from '#lib/database';
+import { getT } from '#lib/i18n';
 import { LanguageKeys } from '#lib/i18n/languageKeys';
 import { toChannelsArray } from '#utils/bits';
-import { seconds } from '#utils/common';
-import { differenceArray, differenceBitField } from '#utils/common/comparators';
+import { differenceArray, differenceBitField, seconds } from '#utils/common';
 import { Colors } from '#utils/constants';
+import { getLogger } from '#utils/functions';
+import { EmbedBuilder } from '@discordjs/builders';
 import { ApplyOptions } from '@sapphire/decorators';
-import { Events, Listener, ListenerOptions } from '@sapphire/framework';
-import { isNullish } from '@sapphire/utilities';
+import { Events, Listener } from '@sapphire/framework';
+import type { TFunction } from '@sapphire/plugin-i18next';
 import {
-	DefaultMessageNotificationLevel,
-	ExplicitContentFilterLevel,
-	Guild,
-	GuildFeatures,
-	MessageEmbed,
-	MFALevel,
-	PremiumTier,
-	SystemChannelFlags,
-	TextChannel,
-	VerificationLevel
+	GuildMFALevel,
+	type Guild,
+	type GuildDefaultMessageNotifications,
+	type GuildExplicitContentFilter,
+	type GuildFeature,
+	type GuildPremiumTier,
+	type GuildVerificationLevel,
+	type SystemChannelFlagsBitField
 } from 'discord.js';
-import type { TFunction } from 'i18next';
 
-type MessageNotifications = DefaultMessageNotificationLevel | number;
-type ChannelFlags = Readonly<SystemChannelFlags>;
-type Features = readonly GuildFeatures[];
+type ChannelFlags = Readonly<SystemChannelFlagsBitField>;
+type Features = readonly `${GuildFeature}`[];
 
-@ApplyOptions<ListenerOptions>({ event: Events.GuildUpdate })
+@ApplyOptions<Listener.Options>({ event: Events.GuildUpdate })
 export class UserListener extends Listener<typeof Events.GuildUpdate> {
 	public async run(previous: Guild, next: Guild) {
-		const [channelId, t] = await readSettings(next, (settings) => [
-			settings[GuildSettings.Channels.Logs.ServerUpdate], //
-			settings.getLanguage()
-		]);
-		if (isNullish(channelId)) return;
+		const settings = await readSettings(next);
+		await getLogger(next).send({
+			key: 'channelsLogsServerUpdate',
+			channelId: settings.channelsLogsServerUpdate,
+			makeMessage: () => {
+				const t = getT(settings.language);
+				const changes: string[] = [...this.differenceGuild(t, previous, next)];
+				if (changes.length === 0) return null;
 
-		const channel = next.channels.cache.get(channelId) as TextChannel | undefined;
-		if (channel === undefined) {
-			await writeSettings(next, [[GuildSettings.Channels.Logs.ServerUpdate, null]]);
-			return;
-		}
-
-		const changes: string[] = [...this.differenceGuild(t, previous, next)];
-		if (changes.length === 0) return;
-
-		const embed = new MessageEmbed()
-			.setColor(Colors.Yellow)
-			.setAuthor(`${next.name} (${next.id})`, channel.guild.iconURL({ size: 64, format: 'png', dynamic: true }) ?? undefined)
-			.setDescription(changes.join('\n'))
-			.setFooter(t(LanguageKeys.Events.Guilds.Logs.ServerUpdate))
-			.setTimestamp();
-		await channel.send({ embeds: [embed] });
+				return new EmbedBuilder()
+					.setColor(Colors.Yellow)
+					.setAuthor({ name: `${next.name} (${next.id})`, iconURL: next.iconURL({ size: 64, extension: 'png' }) ?? undefined })
+					.setDescription(changes.join('\n'))
+					.setFooter({ text: t(LanguageKeys.Events.Guilds.Logs.ServerUpdate) })
+					.setTimestamp();
+			}
+		});
 	}
 
 	private *differenceGuild(t: TFunction, previous: Guild, next: Guild) {
@@ -170,7 +163,11 @@ export class UserListener extends Listener<typeof Events.GuildUpdate> {
 		return t(LanguageKeys.Events.Guilds.Logs.ServerUpdateBanner, { previous, next });
 	}
 
-	private displayDefaultMessageNotifications(t: TFunction, previous: MessageNotifications, next: MessageNotifications): string {
+	private displayDefaultMessageNotifications(
+		t: TFunction,
+		previous: GuildDefaultMessageNotifications,
+		next: GuildDefaultMessageNotifications
+	): string {
 		return t(LanguageKeys.Events.Guilds.Logs.ServerUpdateDefaultMessageNotifications, { previous, next });
 	}
 
@@ -186,7 +183,7 @@ export class UserListener extends Listener<typeof Events.GuildUpdate> {
 		return t(LanguageKeys.Events.Guilds.Logs.ServerUpdateDiscoverySplash, { previous, next });
 	}
 
-	private displayExplicitContentFilter(t: TFunction, previous: ExplicitContentFilterLevel, next: ExplicitContentFilterLevel): string {
+	private displayExplicitContentFilter(t: TFunction, previous: GuildExplicitContentFilter, next: GuildExplicitContentFilter): string {
 		return t(LanguageKeys.Events.Guilds.Logs.ServerUpdateExplicitContentFilter, { previous, next });
 	}
 
@@ -215,8 +212,12 @@ export class UserListener extends Listener<typeof Events.GuildUpdate> {
 		return t(LanguageKeys.Events.Guilds.Logs.ServerUpdateMaximumMembers, { previous, next });
 	}
 
-	private displayMfaLevel(t: TFunction, next: MFALevel): string {
-		return t(next === 'ELEVATED' ? LanguageKeys.Events.Guilds.Logs.ServerUpdateMfaAdded : LanguageKeys.Events.Guilds.Logs.ServerUpdateMfaRemoved);
+	private displayMfaLevel(t: TFunction, next: GuildMFALevel): string {
+		return t(
+			next === GuildMFALevel.Elevated
+				? LanguageKeys.Events.Guilds.Logs.ServerUpdateMfaAdded
+				: LanguageKeys.Events.Guilds.Logs.ServerUpdateMfaRemoved
+		);
 	}
 
 	private displayName(t: TFunction, previous: string, next: string): string {
@@ -239,7 +240,7 @@ export class UserListener extends Listener<typeof Events.GuildUpdate> {
 		return t(LanguageKeys.Events.Guilds.Logs.ServerUpdatePremiumSubscriptionCount, { previous, next });
 	}
 
-	private displayPremiumTier(t: TFunction, previous: PremiumTier, next: PremiumTier): string {
+	private displayPremiumTier(t: TFunction, previous: GuildPremiumTier, next: GuildPremiumTier): string {
 		return t(LanguageKeys.Events.Guilds.Logs.ServerUpdatePremiumTier, { previous, next });
 	}
 
@@ -287,7 +288,7 @@ export class UserListener extends Listener<typeof Events.GuildUpdate> {
 		return t(LanguageKeys.Events.Guilds.Logs.ServerUpdateVanityUrl, { previous, next });
 	}
 
-	private displayVerificationLevel(t: TFunction, previous: VerificationLevel, next: VerificationLevel): string {
+	private displayVerificationLevel(t: TFunction, previous: GuildVerificationLevel, next: GuildVerificationLevel): string {
 		return t(LanguageKeys.Events.Guilds.Logs.ServerUpdateVerificationLevel, { previous, next });
 	}
 
@@ -299,7 +300,9 @@ export class UserListener extends Listener<typeof Events.GuildUpdate> {
 
 	private displayWidgetEnabled(t: TFunction, previous: boolean | null, next: boolean | null): string {
 		return t(
-			next ?? !previous ? LanguageKeys.Events.Guilds.Logs.ServerUpdateWidgetEnabled : LanguageKeys.Events.Guilds.Logs.ServerUpdateWidgetDisabled
+			(next ?? !previous)
+				? LanguageKeys.Events.Guilds.Logs.ServerUpdateWidgetEnabled
+				: LanguageKeys.Events.Guilds.Logs.ServerUpdateWidgetDisabled
 		);
 	}
 }

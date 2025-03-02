@@ -1,29 +1,34 @@
-import { GuildSettings, ReactionRole, readSettings, writeSettings } from '#lib/database';
+import { readSettings, writeSettings, writeSettingsTransaction, type ReactionRole } from '#lib/database';
 import { LanguageKeys } from '#lib/i18n/languageKeys';
-import { SkyraCommand, SkyraPaginatedMessage } from '#lib/structures';
-import type { GuildMessage } from '#lib/types';
-import { PermissionLevels } from '#lib/types/Enums';
+import { SkyraSubcommand } from '#lib/structures';
+import { PermissionLevels, type GuildMessage } from '#lib/types';
+import { minutes } from '#utils/common';
 import { getEmojiString, getEmojiTextFormat } from '#utils/functions';
 import { LongLivingReactionCollector } from '#utils/LongLivingReactionCollector';
-import { sendLoadingMessage } from '#utils/util';
+import { getColor, sendLoadingMessage } from '#utils/util';
 import { channelMention, hideLinkEmbed, hyperlink, roleMention } from '@discordjs/builders';
 import { ApplyOptions, RequiresClientPermissions } from '@sapphire/decorators';
+import { PaginatedMessage } from '@sapphire/discord.js-utilities';
 import { CommandOptionsRunTypeEnum } from '@sapphire/framework';
 import { send } from '@sapphire/plugin-editable-commands';
 import { chunk } from '@sapphire/utilities';
-import { PermissionFlagsBits } from 'discord-api-types/v9';
-import { Guild, MessageEmbed } from 'discord.js';
+import { EmbedBuilder, PermissionFlagsBits, type Guild } from 'discord.js';
 
-@ApplyOptions<SkyraCommand.Options>({
+@ApplyOptions<SkyraSubcommand.Options>({
 	aliases: ['mrr', 'managereactionrole', 'managerolereaction', 'managerolereactions'],
 	description: LanguageKeys.Commands.Management.ManageReactionRolesDescription,
 	detailedDescription: LanguageKeys.Commands.Management.ManageReactionRolesExtended,
 	permissionLevel: PermissionLevels.Administrator,
 	runIn: [CommandOptionsRunTypeEnum.GuildAny],
-	subCommands: ['add', 'remove', 'reset', { input: 'show', default: true }]
+	subcommands: [
+		{ name: 'add', messageRun: 'add' },
+		{ name: 'remove', messageRun: 'remove' },
+		{ name: 'reset', messageRun: 'reset' },
+		{ name: 'show', messageRun: 'show', default: true }
+	]
 })
-export class UserCommand extends SkyraCommand {
-	public async add(message: GuildMessage, args: SkyraCommand.Args) {
+export class UserCommand extends SkyraSubcommand {
+	public async add(message: GuildMessage, args: SkyraSubcommand.Args) {
 		const role = await args.pick('roleName');
 		if (!args.finished) {
 			const channel = await args.pick('textChannelName');
@@ -35,9 +40,9 @@ export class UserCommand extends SkyraCommand {
 				role: role.id
 			};
 
-			await writeSettings(message.guild, (settings) => {
-				settings[GuildSettings.ReactionRoles].push(reactionRole);
-			});
+			await writeSettings(message.guild, (settings) => ({
+				reactionRoles: settings.reactionRoles.concat(reactionRole)
+			}));
 
 			const content = args.t(LanguageKeys.Commands.Management.ManageReactionRolesAddChannel, {
 				emoji: getEmojiTextFormat(reactionRole.emoji),
@@ -60,9 +65,9 @@ export class UserCommand extends SkyraCommand {
 			channel: reaction.channel.id,
 			role: role.id
 		};
-		await writeSettings(message.guild, (settings) => {
-			settings[GuildSettings.ReactionRoles].push(reactionRole);
-		});
+		await writeSettings(message.guild, (settings) => ({
+			reactionRoles: settings.reactionRoles.concat(reactionRole)
+		}));
 
 		const url = `<https://discord.com/channels/${message.guild.id}/${reactionRole.channel}/${reactionRole.message}>`;
 		const content = args.t(LanguageKeys.Commands.Management.ManageReactionRolesAdd, {
@@ -72,22 +77,16 @@ export class UserCommand extends SkyraCommand {
 		return send(message, content);
 	}
 
-	public async remove(message: GuildMessage, args: SkyraCommand.Args) {
+	public async remove(message: GuildMessage, args: SkyraSubcommand.Args) {
 		const role = await args.pick('roleName');
 		const messageId = await args.pick('snowflake');
 
-		const reactionRole = await writeSettings(message.guild, (settings) => {
-			const reactionRoles = settings[GuildSettings.ReactionRoles];
+		using trx = await writeSettingsTransaction(message.guild);
+		const index = trx.settings.reactionRoles.findIndex((entry) => (entry.message ?? entry.channel) === messageId && entry.role === role.id);
+		if (index === -1) this.error(LanguageKeys.Commands.Management.ManageReactionRolesRemoveNotExists);
 
-			const reactionRoleIndex = reactionRoles.findIndex((entry) => (entry.message ?? entry.channel) === messageId && entry.role === role.id);
-
-			if (reactionRoleIndex === -1) this.error(LanguageKeys.Commands.Management.ManageReactionRolesRemoveNotExists);
-
-			const removedReactionRole = reactionRoles[reactionRoleIndex];
-			reactionRoles.splice(reactionRoleIndex, 1);
-
-			return removedReactionRole;
-		});
+		const reactionRole = trx.settings.reactionRoles[index];
+		await trx.write({ reactionRoles: trx.settings.reactionRoles.toSpliced(index, 1) }).submit();
 
 		const url = reactionRole.message
 			? `<https://discord.com/channels/${message.guild.id}/${reactionRole.channel}/${reactionRole.message}>`
@@ -100,34 +99,27 @@ export class UserCommand extends SkyraCommand {
 		return send(message, content);
 	}
 
-	public async reset(message: GuildMessage, args: SkyraCommand.Args) {
-		await writeSettings(message.guild, (settings) => {
-			const reactionRoles = settings[GuildSettings.ReactionRoles];
-
-			if (reactionRoles.length === 0) {
-				this.error(LanguageKeys.Commands.Management.ManageReactionRolesResetEmpty);
-			}
-
-			reactionRoles.length = 0;
-		});
-
+	public async reset(message: GuildMessage, args: SkyraSubcommand.Args) {
+		await writeSettings(message.guild, { reactionRoles: [] });
 		const content = args.t(LanguageKeys.Commands.Management.ManageReactionRolesReset);
 		return send(message, content);
 	}
 
 	@RequiresClientPermissions(PermissionFlagsBits.EmbedLinks)
-	public async show(message: GuildMessage, args: SkyraCommand.Args) {
-		const reactionRoles = await readSettings(message.guild, GuildSettings.ReactionRoles);
+	public async show(message: GuildMessage, args: SkyraSubcommand.Args) {
+		const settings = await readSettings(message.guild);
+		const { reactionRoles } = settings;
 		if (reactionRoles.length === 0) {
 			this.error(LanguageKeys.Commands.Management.ManageReactionRolesShowEmpty);
 		}
 
 		const response = await sendLoadingMessage(message, args.t);
 
-		const display = new SkyraPaginatedMessage({
-			template: new MessageEmbed().setColor(await this.container.db.fetchColor(message))
+		const display = new PaginatedMessage({
+			template: new EmbedBuilder().setColor(getColor(message))
 		});
 
+		display.setIdle(minutes(5));
 		for (const bulk of chunk(reactionRoles, 15)) {
 			const serialized = bulk.map((value) => this.format(value, message.guild)).join('\n');
 			display.addPageEmbed((embed) => embed.setDescription(serialized));

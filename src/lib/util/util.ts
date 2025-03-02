@@ -1,47 +1,29 @@
-import { GuildSettings } from '#lib/database/keys';
-import { readSettings } from '#lib/database/settings/functions';
 import { LanguageKeys } from '#lib/i18n/languageKeys';
 import type { GuildMessage } from '#lib/types';
-import { TwemojiRegex } from '@sapphire/discord.js-utilities';
-import { UserError } from '@sapphire/framework';
+import { BrandingColors, Urls, ZeroWidthSpace } from '#lib/util/constants';
+import { EmbedBuilder } from '@discordjs/builders';
+import { isImageAttachment } from '@sapphire/discord.js-utilities';
+import { container } from '@sapphire/framework';
+import { first } from '@sapphire/iterator-utilities/first';
 import { send } from '@sapphire/plugin-editable-commands';
-import { DiscordSnowflake } from '@sapphire/snowflake';
-import { Time } from '@sapphire/time-utilities';
-import { isNullishOrEmpty, isNumber, Nullish, parseURL } from '@sapphire/utilities';
-import { getCode, isLetterOrDigit, isWhiteSpace } from '@skyra/char';
-import { Image, resolveImage } from 'canvas-constructor/skia';
-import type { APIUser } from 'discord-api-types/v9';
+import type { TFunction } from '@sapphire/plugin-i18next';
+import { isNullishOrEmpty, tryParseURL, type Nullish } from '@sapphire/utilities';
 import {
-	AllowedImageSize,
-	Guild,
-	GuildChannel,
-	ImageURLOptions,
-	Message,
-	MessageEmbed,
-	Permissions,
-	Role,
-	ThreadChannel,
-	User,
-	UserResolvable
+	GuildMember,
+	PermissionFlagsBits,
+	StickerFormatType,
+	type APIUser,
+	type EmbedAuthorData,
+	type Guild,
+	type GuildChannel,
+	type ImageURLOptions,
+	type Message,
+	type MessageMentionTypes,
+	type Snowflake,
+	type ThreadChannel,
+	type User,
+	type UserResolvable
 } from 'discord.js';
-import type { TFunction } from 'i18next';
-import { api } from '../discord/Api';
-import { BrandingColors, ZeroWidthSpace } from './constants';
-import type { LeaderboardUser } from './Leaderboard';
-
-const ONE_TO_TEN = new Map<number, UtilOneToTenEntry>([
-	[0, { emoji: '😪', color: 0x5b1100 }],
-	[1, { emoji: '😪', color: 0x5b1100 }],
-	[2, { emoji: '😫', color: 0xab1100 }],
-	[3, { emoji: '😔', color: 0xff2b00 }],
-	[4, { emoji: '😒', color: 0xff6100 }],
-	[5, { emoji: '😌', color: 0xff9c00 }],
-	[6, { emoji: '😕', color: 0xb4bf00 }],
-	[7, { emoji: '😬', color: 0x84fc00 }],
-	[8, { emoji: '🙂', color: 0x5bf700 }],
-	[9, { emoji: '😃', color: 0x24f700 }],
-	[10, { emoji: '😍', color: 0x51d4ef }]
-]);
 
 /**
  * Image extensions:
@@ -53,156 +35,6 @@ const ONE_TO_TEN = new Map<number, UtilOneToTenEntry>([
  * - webp
  */
 export const IMAGE_EXTENSION = /\.(bmp|jpe?g|png|gif|webp)$/i;
-
-/**
- * Audio extensions:
- * - wav
- * - mp3
- * - ogg
- */
-export const AUDIO_EXTENSION = /\.(wav|mp3|ogg)$/i;
-
-/**
- * Video extensions:
- * - gifv
- * - webm
- * - mp4
- */
-export const VIDEO_EXTENSION = /\.(gifv|webm|mp4)$/i;
-
-/**
- * Media extensions
- * - ...Image extensions
- * - ...Audio extensions
- * - ...Video extensions
- */
-export const MEDIA_EXTENSION = /\.(bmp|jpe?g|png|gifv?|web[pm]|wav|mp[34]|ogg)$/i;
-
-export function radians(degrees: number) {
-	return (degrees * Math.PI) / 180;
-}
-
-export function showSeconds(duration: number): string {
-	if (!isNumber(duration)) return '00:00';
-	const seconds = Math.floor(duration / Time.Second) % 60;
-	const minutes = Math.floor(duration / Time.Minute) % 60;
-	let output = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-	if (duration >= Time.Hour) {
-		const hours = Math.floor(duration / Time.Hour);
-		output = `${hours.toString().padStart(2, '0')}:${output}`;
-	}
-
-	return output;
-}
-
-export function snowflakeAge(snowflake: string | bigint) {
-	const { timestamp } = DiscordSnowflake.deconstruct(snowflake);
-	return Math.max(Date.now() - Number(timestamp), 0);
-}
-
-/**
- * Check if the announcement is correctly set up
- * @param message The message instance to check with
- */
-export async function announcementCheck(message: GuildMessage) {
-	const [announcementId] = await readSettings(message.guild, (settings) => [settings[GuildSettings.Roles.Subscriber]]);
-	if (!announcementId) throw new UserError({ identifier: LanguageKeys.Commands.Announcement.SubscribeNoRole });
-
-	const role = message.guild.roles.cache.get(announcementId);
-	if (!role) throw new UserError({ identifier: LanguageKeys.Commands.Announcement.SubscribeNoRole });
-
-	if (role.position >= message.guild.me!.roles.highest.position) throw new UserError({ identifier: LanguageKeys.System.HighestRole });
-	return role;
-}
-
-export function oneToTen(level: number): UtilOneToTenEntry | undefined {
-	level |= 0;
-	if (level < 0) level = 0;
-	else if (level > 10) level = 10;
-	return ONE_TO_TEN.get(level);
-}
-
-export interface Payload {
-	avatar: string | null;
-	username: string | null;
-	discriminator: string | null;
-	points: number;
-	position: number;
-}
-
-export function fetchAllLeaderBoardEntries(guild: Guild, results: readonly [string, LeaderboardUser][]) {
-	const members = guild.members.cache;
-	const payload: Payload[] = [];
-	for (const [id, element] of results) {
-		const member = members.get(id);
-		if (member === undefined) {
-			payload.push({
-				avatar: null,
-				username: null,
-				discriminator: null,
-				points: element.points,
-				position: element.position
-			});
-		} else {
-			const { user } = member;
-			payload.push({
-				avatar: user.avatar,
-				username: user.username,
-				discriminator: user.discriminator,
-				points: element.points,
-				position: element.position
-			});
-		}
-	}
-
-	return payload;
-}
-
-export async function fetchAvatar(user: User, size: AllowedImageSize = 512): Promise<Image> {
-	const url = user.avatar ? user.avatarURL({ format: 'png', size })! : user.defaultAvatarURL;
-	try {
-		return await resolveImage(url);
-	} catch (error) {
-		throw `Could not download the profile avatar: ${error}`;
-	}
-}
-
-export async function fetchReactionUsers(channelId: string, messageId: string, reaction: string) {
-	const users: Set<string> = new Set();
-	let rawUsers: APIUser[] = [];
-
-	// Fetch loop, to get +100 users
-	do {
-		rawUsers = await api()
-			.channels(channelId)
-			.messages(messageId)
-			.reactions(reaction)
-			.get<APIUser[]>({ query: { limit: 100, after: rawUsers.length ? rawUsers[rawUsers.length - 1].id : undefined } });
-		for (const user of rawUsers) users.add(user.id);
-	} while (rawUsers.length === 100);
-
-	return users;
-}
-
-export function twemoji(emoji: string) {
-	const r: string[] = [];
-	let c = 0;
-	let p = 0;
-	let i = 0;
-
-	while (i < emoji.length) {
-		c = emoji.charCodeAt(i++);
-		if (p) {
-			r.push((0x10000 + ((p - 0xd800) << 10) + (c - 0xdc00)).toString(16));
-			p = 0;
-		} else if (c >= 0xd800 && c <= 0xdbff) {
-			p = c;
-		} else {
-			r.push(c.toString(16));
-		}
-	}
-	return r.join('-');
-}
 
 /**
  * Get the content from a message.
@@ -217,68 +49,34 @@ export function getContent(message: Message): string | null {
 	return null;
 }
 
-/**
- * Gets all the contents from a message.
- * @param message The Message instance to get all contents from
- */
-export function getAllContent(message: Message): string {
-	const output: string[] = [];
-	if (message.content) output.push(message.content);
-	for (const embed of message.embeds) {
-		if (embed.author?.name) output.push(embed.author.name);
-		if (embed.title) output.push(embed.title);
-		if (embed.description) output.push(embed.description);
-		for (const field of embed.fields) output.push(`${field.name}\n${field.value}`);
-		if (embed.footer?.text) output.push(embed.footer.text);
-	}
-
-	return output.join('\n');
-}
-
-export interface ImageAttachment {
+export interface ResolvedImageAttachment {
 	url: string;
 	proxyURL: string;
 	height: number;
 	width: number;
 }
 
-/**
- * Get a image attachment from a message.
- * @param message The Message instance to get the image url from
- */
-export function getAttachment(message: Message): ImageAttachment | null {
-	if (message.attachments.size) {
-		const attachment = message.attachments.find((att) => IMAGE_EXTENSION.test(att.url));
-		if (attachment) {
-			return {
-				url: attachment.url,
-				proxyURL: attachment.proxyURL,
-				height: attachment.height!,
-				width: attachment.width!
-			};
-		}
+export function* getImages(message: Message): IterableIterator<string> {
+	for (const attachment of message.attachments.values()) {
+		if (isImageAttachment(attachment)) yield attachment.proxyURL ?? attachment.url;
 	}
 
 	for (const embed of message.embeds) {
-		if (embed.type === 'image') {
-			return {
-				url: embed.thumbnail!.url,
-				proxyURL: embed.thumbnail!.proxyURL!,
-				height: embed.thumbnail!.height!,
-				width: embed.thumbnail!.width!
-			};
-		}
 		if (embed.image) {
-			return {
-				url: embed.image.url,
-				proxyURL: embed.image.proxyURL!,
-				height: embed.image.height!,
-				width: embed.image.width!
-			};
+			yield embed.image.proxyURL ?? embed.image.url;
+		}
+
+		if (embed.thumbnail) {
+			yield embed.thumbnail.proxyURL ?? embed.thumbnail.url;
 		}
 	}
 
-	return null;
+	for (const sticker of message.stickers.values()) {
+		// Skip if the sticker is a lottie sticker:
+		if (sticker.format === StickerFormatType.Lottie) continue;
+
+		yield sticker.url;
+	}
 }
 
 /**
@@ -286,16 +84,57 @@ export function getAttachment(message: Message): ImageAttachment | null {
  * @param message The Message instance to get the image url from
  */
 export function getImage(message: Message): string | null {
-	const attachment = getAttachment(message);
-	return attachment ? attachment.proxyURL || attachment.url : null;
+	return first(getImages(message)) ?? null;
 }
 
-const ROOT = 'https://cdn.discordapp.com';
-export function getDisplayAvatar(id: string, user: User | APIUser, options: ImageURLOptions = {}) {
-	if (user.avatar === null) return `${ROOT}/embed/avatars/${Number(user.discriminator) % 5}.png`;
-	const format = typeof options.format === 'undefined' ? (user.avatar.startsWith('a_') ? 'gif' : 'png') : options.format;
-	const size = typeof options.size === 'undefined' ? '' : `?size=${options.size}`;
-	return `${ROOT}/avatars/${id}/${user.avatar}.${format}${size}`;
+export function setMultipleEmbedImages(embed: EmbedBuilder, urls: IterableIterator<string>) {
+	const embeds = [embed];
+	let count = 0;
+	for (const url of urls) {
+		if (count === 0) {
+			embed.setURL(Urls.Website).setImage(url);
+		} else {
+			embeds.push(new EmbedBuilder().setURL(Urls.Website).setImage(url));
+
+			// We only want to send 4 embeds at most
+			if (count === 3) break;
+		}
+
+		count++;
+	}
+
+	return embeds;
+}
+
+/**
+ * Checks whether or not the user uses the new username change, defined by the
+ * `discriminator` being `'0'` or in the future, no discriminator at all.
+ * @see {@link https://dis.gd/usernames}
+ * @param user The user to check.
+ */
+export function usesPomelo(user: User | APIUser) {
+	return isNullishOrEmpty(user.discriminator) || user.discriminator === '0';
+}
+
+export function getDisplayAvatar(user: User | APIUser, options?: Readonly<ImageURLOptions>) {
+	if (user.avatar === null) {
+		const id = usesPomelo(user) ? Number(BigInt(user.id) >> 22n) % 6 : Number(user.discriminator) % 5;
+		return container.client.rest.cdn.defaultAvatar(id);
+	}
+
+	return container.client.rest.cdn.avatar(user.id, user.avatar, options);
+}
+
+export function getTag(user: User | APIUser) {
+	return usesPomelo(user) ? `@${user.username}` : `${user.username}#${user.discriminator}`;
+}
+
+export function getEmbedAuthor(user: User | APIUser, url?: string | undefined): EmbedAuthorData {
+	return { name: getTag(user), iconURL: getDisplayAvatar(user, { size: 128 }), url };
+}
+
+export function getFullEmbedAuthor(user: User | APIUser, url?: string | undefined): EmbedAuthorData {
+	return { name: `${getTag(user)} (${user.id})`, iconURL: getDisplayAvatar(user, { size: 128 }), url };
 }
 
 /**
@@ -327,7 +166,7 @@ export function parseRange(input: string): number[] {
  * @param url The url to check
  */
 export function getImageUrl(url: string): string | undefined {
-	const parsed = parseURL(url);
+	const parsed = tryParseURL(url);
 	return parsed && IMAGE_EXTENSION.test(parsed.pathname) ? parsed.href : undefined;
 }
 
@@ -337,7 +176,7 @@ export function getImageUrl(url: string): string | undefined {
  * @param input The input to clean
  * @returns The input cleaned of mentions
  * @license Apache-2.0
- * @copyright 2019 Antonio Román
+ * @copyright 2019 Aura Román
  */
 export function cleanMentions(guild: Guild, input: string) {
 	return input.replace(/@(here|everyone)/g, `@${ZeroWidthSpace}$1`).replace(/<(@[!&]?|#)(\d{17,19})>/g, (match, type, id) => {
@@ -362,6 +201,42 @@ export function cleanMentions(guild: Guild, input: string) {
 }
 
 export const anyMentionRegExp = /<(@[!&]?|#)(\d{17,19})>/g;
+export const hereOrEveryoneMentionRegExp = /@(?:here|everyone)/;
+
+/**
+ * Splits a message into multiple messages if it exceeds a certain length, using a specified character as the delimiter.
+ * @param content The message to split.
+ * @param options The options for splitting the message.
+ * @returns An array of messages split from the original message.
+ * @throws An error if the content cannot be split.
+ */
+export function splitMessage(content: string, options: SplitMessageOptions) {
+	if (content.length <= options.maxLength) return [content];
+
+	let last = 0;
+	const messages = [] as string[];
+	while (last < content.length) {
+		// If the last chunk can fit the rest of the content, push it and break:
+		if (content.length - last <= options.maxLength) {
+			messages.push(content.slice(last));
+			break;
+		}
+
+		// Find the last best index to split the chunk:
+		const index = content.lastIndexOf(options.char, options.maxLength + last);
+		if (index === -1) throw new Error('Unable to split content.');
+
+		messages.push(content.slice(last, index + 1));
+		last = index + 1;
+	}
+
+	return messages;
+}
+
+export interface SplitMessageOptions {
+	char: string;
+	maxLength: number;
+}
 
 /**
  * Extracts mentions from a body of text.
@@ -372,9 +247,10 @@ export function extractDetailedMentions(input: string | Nullish): DetailedMentio
 	const users = new Set<string>();
 	const roles = new Set<string>();
 	const channels = new Set<string>();
+	const parse = [] as MessageMentionTypes[];
 
 	if (isNullishOrEmpty(input)) {
-		return { users, roles, channels };
+		return { users, roles, channels, parse };
 	}
 
 	let result: RegExpExecArray | null;
@@ -396,27 +272,16 @@ export function extractDetailedMentions(input: string | Nullish): DetailedMentio
 		}
 	}
 
-	return { users, roles, channels };
+	if (hereOrEveryoneMentionRegExp.test(input)) parse.push('everyone');
+
+	return { users, roles, channels, parse };
 }
 
 export interface DetailedMentionExtractionResult {
 	users: ReadonlySet<string>;
 	roles: ReadonlySet<string>;
 	channels: ReadonlySet<string>;
-}
-
-/**
- * Creates an array picker function
- * @param array The array to create a pick function from
- * @example
- * const picker = createPick([1, 2, 3, 4]);
- * picker(); // 2
- * picker(); // 1
- * picker(); // 4
- */
-export function createPick<T>(array: T[]): () => T {
-	const { length } = array;
-	return () => array[Math.floor(Math.random() * length)];
+	parse: MessageMentionTypes[];
 }
 
 /**
@@ -428,17 +293,6 @@ export function createPick<T>(array: T[]): () => T {
 export function pickRandom<T>(array: readonly T[]): T {
 	const { length } = array;
 	return array[Math.floor(Math.random() * length)];
-}
-
-export function getFromPath(object: Record<string, unknown>, path: string | readonly string[]): unknown {
-	if (typeof path === 'string') path = path.split('.');
-
-	let value: unknown = object;
-	for (const key of path) {
-		value = Reflect.get(value as Record<string, unknown>, key);
-		if (value === null || value === undefined) return value;
-	}
-	return value;
 }
 
 export function cast<T>(value: unknown): T {
@@ -453,35 +307,7 @@ export function cast<T>(value: unknown): T {
  * @example validateChannelAccess(channel, message.author)
  */
 export function validateChannelAccess(channel: GuildChannel | ThreadChannel, user: UserResolvable) {
-	return (channel.guild !== null && channel.permissionsFor(user)?.has(Permissions.FLAGS.VIEW_CHANNEL)) || false;
-}
-
-export function getHighestRole(guild: Guild, roles: readonly string[]) {
-	let highest: Role | null = null;
-	let position = 0;
-	for (const roleId of roles) {
-		const role = guild.roles.cache.get(roleId);
-		if (typeof role === 'undefined') continue;
-		if (role.position > position) {
-			highest = role;
-			position = role.position;
-		}
-	}
-
-	return highest;
-}
-
-/**
- * Fake GraphQL tag that just returns everything passed in as a single combined string
- * @remark used to trick the GraphQL parser into treating some code as GraphQL parsable data for syntax checking
- * @param gqlData data to pass off as GraphQL code
- */
-export function gql(...args: any[]): string {
-	return args[0].reduce((acc: string, str: string, idx: number) => {
-		acc += str;
-		if (Reflect.has(args, idx + 1)) acc += args[idx + 1];
-		return acc;
-	}, '');
+	return (channel.guild !== null && channel.permissionsFor(user)?.has(PermissionFlagsBits.ViewChannel)) || false;
 }
 
 /**
@@ -500,45 +326,21 @@ export const shuffle = <T>(array: T[]): T[] => {
 export const random = (num: number) => Math.floor(Math.random() * num);
 
 export const sendLoadingMessage = <T extends GuildMessage | Message>(message: T, t: TFunction): Promise<T> => {
-	const embed = new MessageEmbed().setDescription(pickRandom(t(LanguageKeys.System.Loading))).setColor(BrandingColors.Secondary);
+	const embed = new EmbedBuilder().setDescription(pickRandom(t(LanguageKeys.System.Loading))).setColor(BrandingColors.Secondary);
 	return send(message, { embeds: [embed] }) as Promise<T>;
 };
 
-/**
- * Gets the base language from an i18n code.
- * @param lang The ISO 639-1 language to process, e.g. `en-US`
- * @returns The base language, for example, `en-US` becomes `en`.
- */
-export function baseLanguage(lang: string): string {
-	const index = lang.indexOf('-');
-	return index === -1 ? lang : lang.slice(0, index);
+export function getColor(message: { member?: GuildMember | Nullish }) {
+	return message.member?.displayColor ?? BrandingColors.Primary;
 }
 
 /**
- * Gets the country from an i18n code.
- * @param lang The ISO 639-1 language to process, e.g. `en-US`
- * @returns The country, for example, `en-US` becomes `US`.
+ * Checks if the provided user ID is the same as the client's ID.
+ *
+ * @param userId - The user ID to check.
  */
-export function countryLanguage(lang: string): string {
-	const index = lang.lastIndexOf('-');
-	return index === -1 ? lang : lang.slice(index + 1);
-}
-
-export function sanitizeInput(input: string): string {
-	return [...input]
-		.map((c) => {
-			if (TwemojiRegex.test(c)) return c;
-
-			const code = getCode(c);
-
-			return isLetterOrDigit(code) || isWhiteSpace(code) ? c : '';
-		})
-		.join('');
-}
-
-export interface UtilOneToTenEntry {
-	emoji: string;
-	color: number;
+export function isUserSelf(userId: Snowflake) {
+	return userId === process.env.CLIENT_ID;
 }
 
 export interface MuteOptions {

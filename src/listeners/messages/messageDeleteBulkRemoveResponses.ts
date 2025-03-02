@@ -1,16 +1,15 @@
-import { CommandMatcher, GuildSettings, readSettings } from '#lib/database';
-import type { GuildMessage } from '#lib/types';
-import { Events } from '#lib/types/Enums';
+import { CommandMatcher, readSettings } from '#lib/database';
+import { Events, type GuildMessage } from '#lib/types';
 import { deleteMessage, getCommand } from '#utils/functions';
 import { ApplyOptions } from '@sapphire/decorators';
-import { Listener, ListenerOptions } from '@sapphire/framework';
+import { Listener } from '@sapphire/framework';
 import { get } from '@sapphire/plugin-editable-commands';
 import { hasAtLeastOneKeyInMap } from '@sapphire/utilities';
-import type { Collection, Message, Snowflake } from 'discord.js';
+import type { Message, OmitPartialGroupDMChannel, ReadonlyCollection } from 'discord.js';
 
-type MessageCollection = Collection<Snowflake, Message>;
+type MessageCollection = ReadonlyCollection<string, OmitPartialGroupDMChannel<Message<boolean>>>;
 
-@ApplyOptions<ListenerOptions>({ event: Events.MessageDeleteBulk })
+@ApplyOptions<Listener.Options>({ event: Events.MessageDeleteBulk })
 export class UserListener extends Listener<Events.MessageDeleteBulk> {
 	public async run(messages: MessageCollection) {
 		// If, for some reason, this was emitted with no messages, skip all:
@@ -21,20 +20,17 @@ export class UserListener extends Listener<Events.MessageDeleteBulk> {
 		// If the auto-delete behavior cannot be customized, delete all:
 		if (!this.canBeCustomized(first)) return this.deleteAll(messages);
 
-		const [ignoredAll, ignoredChannels, ignoredCommands, ignoredRoles] = await readSettings(first.guild, [
-			GuildSettings.Messages.AutoDelete.IgnoredAll,
-			GuildSettings.Messages.AutoDelete.IgnoredChannels,
-			GuildSettings.Messages.AutoDelete.IgnoredCommands,
-			GuildSettings.Messages.AutoDelete.IgnoredRoles
-		]);
+		const settings = await readSettings(first.guild);
 
 		// If auto-delete is disabled globally, skip all:
-		if (ignoredAll) return;
+		if (settings.messagesAutoDeleteIgnoredAll) return;
 
 		// If the channel is ignored, skip all:
-		if (ignoredChannels.includes(first.channel.id)) return;
+		if (settings.messagesAutoDeleteIgnoredChannels.includes(first.channel.id)) return;
 
 		// If the auto-delete behavior is not changed, delete all:
+		const ignoredCommands = settings.messagesAutoDeleteIgnoredCommands;
+		const ignoredRoles = settings.messagesAutoDeleteIgnoredRoles;
 		if (ignoredCommands.length === 0 && ignoredRoles.length === 0) return this.deleteAll(messages);
 
 		for (const message of messages.values()) {
@@ -53,7 +49,7 @@ export class UserListener extends Listener<Events.MessageDeleteBulk> {
 		return message.guild !== null;
 	}
 
-	private shouldBeIgnored(message: GuildMessage, ignoredCommands: string[], ignoredRoles: string[]): boolean {
+	private shouldBeIgnored(message: GuildMessage, ignoredCommands: readonly string[], ignoredRoles: readonly string[]): boolean {
 		// Check for ignored roles:
 		if (hasAtLeastOneKeyInMap(message.member.roles.cache, ignoredRoles)) return true;
 
